@@ -1,0 +1,11 @@
+# Kasa AI
+node_modules/
+frontend/dist/
+backend/.venv/
+backend/**/__pycache__/
+*.pyc
+.env
+backend/.data/
+.DS_Store
+*.log
+.vercel
