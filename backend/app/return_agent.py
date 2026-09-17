@@ -4,7 +4,7 @@ import asyncio
 import re
 
 from .llm_negotiation import append_log, llm
-from .models import Invoice, Negotiation, NegotiationStatus
+from .models import Invoice, Negotiation, NegotiationStatus, ErrorResponse, ErrorDetail
 from .stellar_anchor import DEFAULT_IBAN, stellar_anchor_service
 from .store import store
 from .websocket_manager import ws_manager
@@ -80,11 +80,76 @@ def customer_system(b2c_input: str, lang: str = "tr") -> str:
 
 
 def parse_return_request(text: str) -> tuple[str, float]:
+    """Parse return request with robust error handling"""
     raw = (text or "").strip()
+    
+    if not raw:
+        raise ValueError(
+            ErrorResponse(
+                error="Empty return request text",
+                error_code="EMPTY_RETURN_REQUEST",
+                details=[
+                    ErrorDetail(
+                        field="text",
+                        message="Return request text cannot be empty",
+                        code="VALIDATION_ERROR"
+                    )
+                ]
+            ).model_dump_json()
+        )
+    
     amount_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:TL|₺)?", raw, re.IGNORECASE)
-    amount = float(amount_match.group(1).replace(",", ".")) if amount_match else 0.0
+    
+    if not amount_match:
+        raise ValueError(
+            ErrorResponse(
+                error="No amount found in return request",
+                error_code="AMOUNT_NOT_FOUND",
+                details=[
+                    ErrorDetail(
+                        field="text",
+                        message="Could not extract amount from return request text",
+                        code="PARSE_ERROR"
+                    )
+                ]
+            ).model_dump_json()
+        )
+    
+    try:
+        amount = float(amount_match.group(1).replace(",", "."))
+    except (ValueError, AttributeError) as e:
+        raise ValueError(
+            ErrorResponse(
+                error="Invalid amount format",
+                error_code="INVALID_AMOUNT_FORMAT",
+                details=[
+                    ErrorDetail(
+                        field="text",
+                        message=f"Failed to parse amount: {str(e)}",
+                        code="PARSE_ERROR"
+                    )
+                ]
+            ).model_dump_json()
+        ) from e
+    
+    if amount <= 0:
+        raise ValueError(
+            ErrorResponse(
+                error="Amount must be positive",
+                error_code="INVALID_AMOUNT_VALUE",
+                details=[
+                    ErrorDetail(
+                        field="amount",
+                        message="Return amount must be greater than 0",
+                        code="VALIDATION_ERROR"
+                    )
+                ]
+            ).model_dump_json()
+        )
+    
     product = re.sub(r"\d+(?:[.,]\d+)?\s*(?:TL|₺)?", "", raw, flags=re.IGNORECASE)
     product = re.sub(r"[,:;.\-–]+$", "", product).strip(" ,") or "ürün"
+    
     return product, amount
 
 
@@ -92,108 +157,190 @@ class ReturnAgentService:
     """B2C iade pazarlığı: mağaza ajanı ↔ müşteri simülasyonu → SEP-6."""
 
     async def start_return(self, text: str | None = None, lang: str = "tr") -> Negotiation:
-        b2c_input = (text or "").strip()
-        product, list_price = parse_return_request(b2c_input)
-        invoice = Invoice(
-            supplier="E-ticaret mağazası",
-            product=product,
-            quantity=1,
-            amount=list_price,
-        )
-        store.invoices[invoice.id] = invoice
-        neg = Negotiation(
-            invoice_id=invoice.id,
-            supplier="E-ticaret mağazası",
-            product=product,
-            quantity=1,
-            initial_amount=list_price,
-            current_amount=list_price,
-            status=NegotiationStatus.NEGOTIATING,
-        )
-        store.negotiations[neg.id] = neg
+        """Start return negotiation with comprehensive error handling"""
         try:
-            await self._loop(neg, b2c_input, list_price, lang=lang)
-        except Exception as exc:
-            await append_log(
-                neg,
-                "seller",
-                list_price,
-                f"İade ajanı hatası: {exc}",
-                "negotiating",
-                0,
+            b2c_input = (text or "").strip()
+            
+            if not b2c_input:
+                raise ValueError(
+                    ErrorResponse(
+                        error="Return request text is required",
+                        error_code="MISSING_RETURN_TEXT",
+                        details=[
+                            ErrorDetail(
+                                field="text",
+                                message="Return request text cannot be empty",
+                                code="VALIDATION_ERROR"
+                            )
+                        ]
+                    ).model_dump_json()
+                )
+            
+            product, list_price = parse_return_request(b2c_input)
+            
+            invoice = Invoice(
+                supplier="E-ticaret mağazası",
+                product=product,
+                quantity=1,
+                amount=list_price,
             )
+            store.invoices[invoice.id] = invoice
+            
+            neg = Negotiation(
+                invoice_id=invoice.id,
+                supplier="E-ticaret mağazası",
+                product=product,
+                quantity=1,
+                initial_amount=list_price,
+                current_amount=list_price,
+                status=NegotiationStatus.NEGOTIATING,
+            )
+            store.negotiations[neg.id] = neg
+            
+            await self._loop(neg, b2c_input, list_price, lang=lang)
+            
+        except ValueError as e:
+            # Re-raise ValueError with ErrorResponse
+            raise
+        except Exception as exc:
+            # Handle unexpected errors
+            error_msg = str(exc).lower()
+            
+            if "api" in error_msg or "llm" in error_msg:
+                raise ValueError(
+                    ErrorResponse(
+                        error="LLM service error during return negotiation",
+                        error_code="RETURN_LLM_ERROR",
+                        details=[
+                            ErrorDetail(
+                                field="llm",
+                                message=f"LLM service failed: {str(exc)}",
+                                code="SERVICE_ERROR"
+                            )
+                        ]
+                    ).model_dump_json()
+                ) from exc
+            else:
+                raise ValueError(
+                    ErrorResponse(
+                        error="Unexpected error during return negotiation",
+                        error_code="RETURN_NEGOTIATION_ERROR",
+                        details=[
+                            ErrorDetail(
+                                field="system",
+                                message=f"Unexpected error: {str(exc)}",
+                                code="UNKNOWN_ERROR"
+                            )
+                        ]
+                    ).model_dump_json()
+                ) from exc
+        
         return neg
 
     async def _loop(self, neg: Negotiation, b2c_input: str, list_price: float, lang: str = "tr") -> None:
-        cust_sys = customer_system(b2c_input, lang=lang)
-        brand_sys = build_brand_system(list_price, lang=lang)
-        credit = round(list_price, 2) if list_price else 0.0
-        full_cash = round(list_price, 2) if list_price else 0.0
+        """Execute return negotiation loop with error handling"""
+        try:
+            cust_sys = customer_system(b2c_input, lang=lang)
+            brand_sys = build_brand_system(list_price, lang=lang)
+            credit = round(list_price, 2) if list_price else 0.0
+            full_cash = round(list_price, 2) if list_price else 0.0
 
-        customer = await llm.complete(
-            cust_sys,
-            f"Şu talebim için iade istiyorum: {b2c_input}. "
-            "Nakit iade istediğini söyle, iyi teklife açık olduğunu ima et. status=negotiating.",
-        )
-        await append_log(neg, "buyer", customer["price"], customer["message"], "negotiating", 1)
-        await asyncio.sleep(1)
-
-        brand = await llm.complete(
-            brand_sys,
-            f"Müşteri mesajı: {customer['message']}. "
-            f"Ham talep metni: {b2c_input}. "
-            "Talep edilen asıl tutarı analiz et, %100 mağaza kredisini ve sistemin belirlediği kupon oranını teklif et. "
-            "Henüz anlaşma yok. status=negotiating.",
-        )
-        await append_log(neg, "seller", brand["price"], brand["message"], "negotiating", 2)
-        await asyncio.sleep(1)
-
-        if brand.get("status") == "deal" and self._is_store_credit(brand, credit):
-            await self._close_store_credit(neg, float(brand["price"] or credit))
-            return
-
-        customer2 = await llm.complete(
-            cust_sys,
-            f"Markamız şu cevabı verdi: {brand['message']} (price={brand['price']}). "
-            "Nakit iadede ısrar et. status=negotiating.",
-        )
-        if customer2.get("status") == "deal":
-            await append_log(
-                neg, "buyer", customer2["price"], customer2["message"], "deal", 3
+            customer = await llm.complete(
+                cust_sys,
+                f"Şu talebim için iade istiyorum: {b2c_input}. "
+                "Nakit iade istediğini söyle, iyi teklife açık olduğunu ima et. status=negotiating.",
             )
-            if self._is_store_credit(customer2, credit):
-                await self._close_store_credit(neg, credit)
-            else:
-                cash = self._cash_amount(customer2, credit) or full_cash
-                await self._close_cash(neg, cash)
-            return
+            await append_log(neg, "buyer", customer["price"], customer["message"], "negotiating", 1)
+            await asyncio.sleep(1)
 
-        await append_log(
-            neg, "buyer", customer2["price"], customer2["message"], "negotiating", 3
-        )
-        await asyncio.sleep(1)
+            brand = await llm.complete(
+                brand_sys,
+                f"Müşteri mesajı: {customer['message']}. "
+                f"Ham talep metni: {b2c_input}. "
+                "Talep edilen asıl tutarı analiz et, %100 mağaza kredisini ve sistemin belirlediği kupon oranını teklif et. "
+                "Henüz anlaşma yok. status=negotiating.",
+            )
+            await append_log(neg, "seller", brand["price"], brand["message"], "negotiating", 2)
+            await asyncio.sleep(1)
 
-        brand2 = await llm.complete(
-            brand_sys,
-            f"Müşteri nakit iadede ısrar ediyor: {customer2['message']}. "
-            f"Ham talep: {b2c_input}. "
-            "Müşterinin nakit olarak talep ettiği tutarı (toplam sipariş tutarı değil, sadece nakit istediği kısmı) "
-            "SEP-6 ile onayla, ürünün tamamının geri gönderilmesi şartıyla, ve status=deal yaz. "
-            f"KESİNLİKLE şu cümleyle bitir: {'Accepted — full cash refund, shipping the item. Deal.' if lang == 'en' else 'Kabul — tam nakit iade, ürünü kargoluyorum. Deal.'}",
-        )
-        brand2["status"] = "deal"
-        cash = float(brand2.get("price") or 0) or full_cash
-        brand2["price"] = cash
-        await append_log(neg, "seller", brand2["price"], brand2["message"], "deal", 4)
-        await append_log(
-            neg,
-            "buyer",
-            cash,
-            "Accepted — full cash refund, shipping the item. Deal." if lang == "en" else "Kabul — tam nakit iade, ürünü kargoluyorum. Deal.",
-            "deal",
-            4,
-        )
-        await self._close_cash(neg, cash)
+            if brand.get("status") == "deal" and self._is_store_credit(brand, credit):
+                await self._close_store_credit(neg, float(brand["price"] or credit))
+                return
+
+            customer2 = await llm.complete(
+                cust_sys,
+                f"Markamız şu cevabı verdi: {brand['message']} (price={brand['price']}). "
+                "Nakit iadede ısrar et. status=negotiating.",
+            )
+            if customer2.get("status") == "deal":
+                await append_log(
+                    neg, "buyer", customer2["price"], customer2["message"], "deal", 3
+                )
+                if self._is_store_credit(customer2, credit):
+                    await self._close_store_credit(neg, credit)
+                else:
+                    cash = self._cash_amount(customer2, credit) or full_cash
+                    await self._close_cash(neg, cash)
+                return
+
+            await append_log(
+                neg, "buyer", customer2["price"], customer2["message"], "negotiating", 3
+            )
+            await asyncio.sleep(1)
+
+            brand2 = await llm.complete(
+                brand_sys,
+                f"Müşteri nakit iadede ısrar ediyor: {customer2['message']}. "
+                f"Ham talep: {b2c_input}. "
+                "Müşterinin nakit olarak talep ettiği tutarı (toplam sipariş tutarı değil, sadece nakit istediği kısmı) "
+                "SEP-6 ile onayla, ürünün tamamının geri gönderilmesi şartıyla, ve status=deal yaz. "
+                f"KESİNLİKLE şu cümleyle bitir: {'Accepted — full cash refund, shipping the item. Deal.' if lang == 'en' else 'Kabul — tam nakit iade, ürünü kargoluyorum. Deal.'}",
+            )
+            brand2["status"] = "deal"
+            cash = float(brand2.get("price") or 0) or full_cash
+            brand2["price"] = cash
+            await append_log(neg, "seller", brand2["price"], brand2["message"], "deal", 4)
+            await append_log(
+                neg,
+                "buyer",
+                cash,
+                "Accepted — full cash refund, shipping the item. Deal." if lang == "en" else "Kabul — tam nakit iade, ürünü kargoluyorum. Deal.",
+                "deal",
+                4,
+            )
+            await self._close_cash(neg, cash)
+            
+        except ValueError as e:
+            # Re-raise ValueError with ErrorResponse from llm.complete
+            raise
+        except KeyError as e:
+            raise ValueError(
+                ErrorResponse(
+                    error="Invalid LLM response structure",
+                    error_code="RETURN_LLM_RESPONSE_ERROR",
+                    details=[
+                        ErrorDetail(
+                            field="llm_response",
+                            message=f"LLM response missing required field: {str(e)}",
+                            code="VALIDATION_ERROR"
+                        )
+                    ]
+                ).model_dump_json()
+            ) from e
+        except Exception as exc:
+            raise ValueError(
+                ErrorResponse(
+                    error="Return negotiation loop error",
+                    error_code="RETURN_LOOP_ERROR",
+                    details=[
+                        ErrorDetail(
+                            field="system",
+                            message=f"Unexpected error in negotiation loop: {str(exc)}",
+                            code="UNKNOWN_ERROR"
+                        )
+                    ]
+                ).model_dump_json()
+            ) from exc
 
     def _is_store_credit(self, offer: dict, credit: float) -> bool:
         message = str(offer.get("message", "")).lower()

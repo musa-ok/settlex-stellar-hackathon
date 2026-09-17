@@ -2,10 +2,12 @@ import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { api } from '../api'
 import { useLanguage } from '../hooks/useLanguage.jsx'
+import { useToast } from '../contexts/ToastContext'
 
 export default function Onboarding() {
   const navigate = useNavigate()
   const { t } = useLanguage()
+  const { error, success } = useToast()
   const [wallet, setWallet] = useState(() => localStorage.getItem('kasa_wallet') || '')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -20,8 +22,25 @@ export default function Onboarding() {
       localStorage.setItem('kasa_wallet', pk)
       setWallet(pk)
       setStatus(t('Freighter / demo cüzdan bağlandı · Friendbot fonladı', 'Freighter / demo wallet connected · Funded by Friendbot'))
-    } catch (e) {
-      setStatus(e.message || t('Bağlantı hatası', 'Connection error'))
+      success(t('Cüzdan başarıyla bağlandı!', 'Wallet connected successfully!'))
+    } catch (err) {
+      console.error('Wallet connection error:', err)
+      let errorMessage = t('Bağlantı hatası', 'Connection error')
+      
+      // Parse backend ErrorResponse
+      if (err.response?.data) {
+        const errorData = err.response.data
+        if (errorData.error_code) {
+          errorMessage = `${errorData.error}: ${errorData.message || errorData.error_code}`
+        } else if (errorData.error) {
+          errorMessage = errorData.error
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      setStatus(errorMessage)
+      error(errorMessage)
     } finally {
       setBusy(false)
     }

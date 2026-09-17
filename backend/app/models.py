@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 def new_id() -> str:
@@ -32,11 +32,19 @@ class NegotiationStatus(str, Enum):
 
 
 class RuleCreate(BaseModel):
-    supplier: str
-    budget_limit: float
-    anomaly_threshold: Optional[float] = None
-    product_hint: Optional[str] = None
-    raw_text: Optional[str] = None
+    supplier: str = Field(..., min_length=2, max_length=200, description="Supplier company name")
+    budget_limit: float = Field(..., gt=0, le=1_000_000, description="Maximum budget limit in TL")
+    anomaly_threshold: Optional[float] = Field(None, gt=0, le=10_000_000, description="Anomaly detection threshold")
+    product_hint: Optional[str] = Field(None, max_length=100, description="Product category hint")
+    raw_text: Optional[str] = Field(None, max_length=500, description="Original natural language rule text")
+
+    @model_validator(mode='after')
+    def validate_threshold(self) -> 'RuleCreate':
+        if self.anomaly_threshold is None:
+            object.__setattr__(self, 'anomaly_threshold', self.budget_limit * 2)
+        elif self.anomaly_threshold < self.budget_limit:
+            raise ValueError("anomaly_threshold must be greater than or equal to budget_limit")
+        return self
 
 
 class Rule(BaseModel):
@@ -50,11 +58,18 @@ class Rule(BaseModel):
 
 
 class InvoiceCreate(BaseModel):
-    supplier: str
-    product: str = "bardak"
-    quantity: int = 500
-    amount: float
-    force_anomaly: bool = False
+    supplier: str = Field(..., min_length=2, max_length=200, description="Supplier company name")
+    product: str = Field(default="bardak", min_length=1, max_length=100, description="Product name")
+    quantity: int = Field(default=500, gt=0, le=100_000, description="Product quantity")
+    amount: float = Field(..., gt=0, le=10_000_000, description="Invoice amount in TL")
+    force_anomaly: bool = Field(default=False, description="Force anomaly detection for demo purposes")
+
+    @field_validator('supplier')
+    @classmethod
+    def validate_supplier(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("supplier cannot be empty or whitespace")
+        return v.strip()
 
 
 class Invoice(BaseModel):
@@ -121,16 +136,31 @@ class TransactionRecord(BaseModel):
 
 
 class WithdrawRequest(BaseModel):
-    amount: float
-    iban: str = "TR00 0000 0000 0000 0000 0000 00"
-    asset: str = "USDC"
-    sep10_token: Optional[str] = None
-    account: Optional[str] = None
+    amount: float = Field(..., gt=0, le=1_000_000, description="Withdrawal amount")
+    iban: str = Field(default="TR00 0000 0000 0000 0000 0000 00", min_length=15, max_length=34, description="IBAN for withdrawal")
+    asset: str = Field(default="USDC", pattern=r'^[A-Z]{3,12}$', description="Asset code")
+    sep10_token: Optional[str] = Field(None, max_length=500, description="SEP-10 authentication token")
+    account: Optional[str] = Field(None, min_length=56, max_length=56, description="Stellar public key")
+
+    @field_validator('iban')
+    @classmethod
+    def validate_iban(cls, v: str) -> str:
+        cleaned = v.replace(' ', '').upper()
+        if not cleaned.startswith('TR') or len(cleaned) != 26:
+            raise ValueError("Invalid Turkish IBAN format")
+        return cleaned
 
 
 class ReturnCreate(BaseModel):
-    text: str = "Siyah Deri Ceket, 5000 TL"
-    lang: str = "tr"
+    text: str = Field(..., min_length=5, max_length=1000, description="Return request text")
+    lang: str = Field(default="tr", pattern=r'^(tr|en)$', description="Language code (tr or en)")
+
+    @field_validator('text')
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text cannot be empty or whitespace")
+        return v.strip()
 
 
 class AgentLog(BaseModel):
@@ -142,9 +172,57 @@ class AgentLog(BaseModel):
     ts: datetime = Field(default_factory=datetime.utcnow)
 
 
+# ==================== CONTEXT-BASED REQUEST MODELS ====================
+
+class PastInvoice(BaseModel):
+    """Historical invoice data for RAG context"""
+    supplier: str = Field(..., min_length=2, max_length=200)
+    product: str = Field(..., min_length=1, max_length=100)
+    amount: float = Field(..., gt=0, le=10_000_000)
+    date: str = Field(..., min_length=8, max_length=50, description="Date in any format")
+
+
+class NegotiationContext(BaseModel):
+    """Context data for stateless negotiation"""
+    past_invoices: List[PastInvoice] = Field(default_factory=list, description="Historical invoice data")
+    rules: List[Rule] = Field(default_factory=list, description="Applicable business rules")
+    wallet_public_key: Optional[str] = Field(None, min_length=56, max_length=56, description="Stellar wallet public key")
+
+
+class StatelessInvoiceRequest(BaseModel):
+    """Stateless invoice submission with context"""
+    invoice: InvoiceCreate
+    context: NegotiationContext
+    lang: str = Field(default="tr", pattern=r'^(tr|en)$')
+
+
+class StatelessReturnRequest(BaseModel):
+    """Stateless return request with context"""
+    return_request: ReturnCreate
+    context: NegotiationContext
+
+
+# ==================== ERROR RESPONSE MODELS ====================
+
+class ErrorDetail(BaseModel):
+    field: Optional[str] = None
+    message: str
+    code: str
+
+
+class ErrorResponse(BaseModel):
+    success: bool = False
+    error: str
+    error_code: str
+    details: Optional[List[ErrorDetail]] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ==================== EXISTING MODELS (UPDATED) ====================
+
 class BalanceResponse(BaseModel):
-    public_key: Optional[str] = None
-    xlm: float = 0.0
-    usdc: float = 0.0
-    mock_try: float = 0.0
-    network: str = "testnet"
+    public_key: Optional[str] = Field(None, min_length=56, max_length=56)
+    xlm: float = Field(default=0.0, ge=0)
+    usdc: float = Field(default=0.0, ge=0)
+    mock_try: float = Field(default=0.0, ge=0)
+    network: str = Field(default="testnet", pattern=r'^(testnet|public|mainnet)$')

@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useLanguage } from '../hooks/useLanguage.jsx'
+import { useToast } from '../contexts/ToastContext'
 
 export default function Balance() {
   const { t } = useLanguage()
+  const { error, success } = useToast()
   const [bal, setBal] = useState(null)
   const [txs, setTxs] = useState([])
   const [iban, setIban] = useState('TR33 0006 1005 1978 6457 8413 26')
   const [amount, setAmount] = useState(445)
   const [result, setResult] = useState(null)
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
+  const [validationError, setValidationError] = useState('')
   const wallet = localStorage.getItem('kasa_wallet')
 
   async function refresh() {
@@ -21,11 +25,71 @@ export default function Balance() {
     refresh().catch(console.error)
   }, [])
 
+  function validateInputs() {
+    // Validate IBAN format (TR + 24 alphanumeric characters)
+    const cleanIban = iban.replace(/\s/g, '')
+    const ibanRegex = /^TR\d{2}[A-Z0-9]{24}$/
+    if (!ibanRegex.test(cleanIban)) {
+      setValidationError(t('Geçersiz IBAN formatı (TRXX...)', 'Invalid IBAN format (TRXX...)'))
+      return false
+    }
+
+    // Validate minimum 1 USDC
+    if (Number(amount) < 1) {
+      setValidationError(t('Minimum çekim tutarı 1 USDC', 'Minimum withdrawal amount is 1 USDC'))
+      return false
+    }
+
+    // Validate maximum reasonable amount
+    if (Number(amount) > 10000) {
+      setValidationError(t('Maksimum çekim tutarı 10,000 USDC', 'Maximum withdrawal amount is 10,000 USDC'))
+      return false
+    }
+
+    setValidationError('')
+    return true
+  }
+
   async function withdraw(e) {
     e.preventDefault()
-    const res = await api.withdraw({ amount: Number(amount), iban })
-    setResult(res)
-    await refresh()
+    
+    if (!validateInputs()) {
+      error(validationError)
+      return
+    }
+
+    setIsWithdrawing(true)
+    try {
+      const cleanIban = iban.replace(/\s/g, '')
+      const res = await api.withdraw({ amount: Number(amount), iban: cleanIban })
+      setResult(res)
+      await refresh()
+      
+      if (res.ok) {
+        success(t('Çekim işlemi başarılı!', 'Withdrawal successful!'))
+      } else {
+        error(res.message || t('Çekim işlemi başarısız', 'Withdrawal failed'))
+      }
+    } catch (err) {
+      console.error('Withdraw error:', err)
+      let errorMessage = t('Çekim işlemi başarısız', 'Withdrawal failed')
+      
+      // Parse backend ErrorResponse
+      if (err.response?.data) {
+        const errorData = err.response.data
+        if (errorData.error_code) {
+          errorMessage = `${errorData.error}: ${errorData.message || errorData.error_code}`
+        } else if (errorData.error) {
+          errorMessage = errorData.error
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      error(errorMessage)
+    } finally {
+      setIsWithdrawing(false)
+    }
   }
 
   return (
@@ -78,12 +142,18 @@ export default function Balance() {
         />
         <button
           type="submit"
-          className="mt-5 w-full rounded-xl bg-mint py-3 text-sm font-bold text-ink hover:bg-white"
+          disabled={isWithdrawing}
+          className="mt-5 w-full rounded-xl bg-mint py-3 text-sm font-bold text-ink hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {t('Bankaya Çek', 'Withdraw to Bank')}
+          {isWithdrawing ? t('İşleniyor...', 'Processing...') : t('Bankaya Çek', 'Withdraw to Bank')}
         </button>
+        {validationError && (
+          <p className="mt-4 font-mono text-xs text-red-500">{validationError}</p>
+        )}
         {result && (
-          <p className="mt-4 break-all font-mono text-xs text-mint">{result.message}</p>
+          <p className={`mt-4 break-all font-mono text-xs ${result.ok ? 'text-mint' : 'text-red-500'}`}>
+            {result.message}
+          </p>
         )}
       </form>
 

@@ -6,6 +6,7 @@ import Console from './pages/Console'
 import Balance from './pages/Balance'
 import Supplier from './pages/Supplier'
 import { LanguageProvider } from './hooks/useLanguage.jsx'
+import { Toast } from './components/Toast'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/supplier" element={<Supplier />} />
           </Routes>
         </Layout>
+        <Toast />
       </BrowserRouter>
     </LanguageProvider>
   )
