@@ -63,6 +63,7 @@ class InvoiceCreate(BaseModel):
     quantity: int = Field(default=500, gt=0, le=100_000, description="Product quantity")
     amount: float = Field(..., gt=0, le=10_000_000, description="Invoice amount in TL")
     force_anomaly: bool = Field(default=False, description="Force anomaly detection for demo purposes")
+    lang: Optional[str] = Field(None, description="UI language selection, only passed to agent prompts")
 
     @field_validator('supplier')
     @classmethod

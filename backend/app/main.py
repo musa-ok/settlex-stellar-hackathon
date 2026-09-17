@@ -102,7 +102,7 @@ async def delete_rule(rule_id: str):
 @app.post("/api/invoice")
 async def post_invoice(body: InvoiceCreate):
     """Submit invoice (LEGACY: Use /api/invoice/stateless for new integrations)"""
-    return await negotiation_service.submit_invoice(body)
+    return await negotiation_service.submit_invoice(body, lang=body.lang)
 
 
 @app.post("/api/invoice/stateless")
@@ -135,7 +135,7 @@ async def post_invoice_stateless(body: StatelessInvoiceRequest):
         
         try:
             # Execute negotiation with context (including RAG past_invoices)
-            result = await negotiation_service.submit_invoice(invoice_data, past_invoices)
+            result = await negotiation_service.submit_invoice(invoice_data, past_invoices, lang=body.lang)
             return result
         finally:
             # Restore original state
@@ -261,21 +261,21 @@ async def get_negotiation(neg_id: str):
 
 
 @app.post("/api/anomaly/approve")
-async def anomaly_approve(body: AnomalyAction):
+async def anomaly_approve(body: AnomalyAction, lang: str | None = None):
     """Approve anomaly (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
-    return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=True)
+    return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=True, lang=lang)
 
 
 @app.post("/api/anomaly/reject")
-async def anomaly_reject(body: AnomalyAction):
+async def anomaly_reject(body: AnomalyAction, lang: str | None = None):
     """Reject anomaly (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
-    return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=False)
+    return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=False, lang=lang)
 
 
 @app.post("/api/multisig/approve")
-async def multisig_approve(body: AnomalyAction):
+async def multisig_approve(body: AnomalyAction, lang: str | None = None):
     """Approve multisig (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
-    return await negotiation_service.approve_multisig(body.negotiation_id)
+    return await negotiation_service.approve_multisig(body.negotiation_id, lang=lang)
 
 
 @app.get("/api/balance")
