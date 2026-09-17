@@ -1,4 +1,4 @@
-# Kasa AI 🚀
+# Settlex 🚀
 ### Autonomous AI Negotiation & Instant On-Chain Settlement
 
 **A submission for the Rise In × Stellar Pro Hackathon 2026 · Genesis Track**
@@ -7,7 +7,7 @@
 
 ## 🌟 Overview
 
-**Kasa AI** is a next-generation autonomous payment orchestrator designed to eliminate the friction of financial disputes and invoice reconciliation. By leveraging **Gemini 1.5 Flash** agents and the **Stellar Network**, Kasa AI automates complex negotiations for both B2B procurement and B2C customer returns.
+**Settlex** is a next-generation autonomous payment orchestrator designed to eliminate the friction of financial disputes and invoice reconciliation. By leveraging **Gemini 1.5 Flash** agents and the **Stellar Network**, Settlex automates complex negotiations for both B2B procurement and B2C customer returns.
 
 The system doesn't just talk—it settles. Every successful negotiation culminates in an automated on-chain transaction via **Stellar SEP-6**, ensuring that once agents agree on a price, the money moves instantly and transparently.
 
@@ -29,20 +29,20 @@ The system doesn't just talk—it settles. Every successful negotiation culminat
 ### 🤝 Dual-Agent Negotiation Protocol
 Watch in real-time as a "Buyer Agent" and a "Seller Agent" negotiate terms over WebSockets. They analyze budgets, rules, and market conditions to reach a fair "Deal" without human intervention.
 
-### 🧠 RAG-Driven Corporate Memory
-Our agents aren't just smart; they have memory. Using **Retrieval-Augmented Generation (RAG)**, agents consult past invoices and supplier history to detect price gouging or favorable loyalty terms.
+### 🧠 On-the-Fly In-Memory RAG
+Our agents aren't just smart; they have memory. Instead of relying on a heavy vector database, we designed an **On-the-Fly In-Memory RAG** architecture suitable for our stateless API. Past invoices provided in the API request are dynamically converted to vectors using Gemini's `text-embedding-004` model, and NumPy computes cosine similarity to retrieve the most relevant Top-3 invoices for prompt injection into the agent's memory.
 
 ### 🛡️ Multi-Sig CFO Safeguards
-For high-value transactions or suspicious anomalies, Kasa AI triggers a **Multi-Sig sequence**. The payment is frozen on the Stellar ledger until a human administrator (CFO) provides the second signature via a secure dashboard.
+For high-value transactions or suspicious anomalies, Settlex triggers a **Multi-Sig sequence**. The payment is frozen on the Stellar ledger until a human administrator (CFO) provides the second signature via a secure dashboard.
 
 ### 💸 Autonomous Split Refunds (B2C)
-Kasa AI introduces the **Karma İade (Split Refund)** logic. If a customer wants a partial cash refund and partial store credit, the agents calculate the split, verify return shipping requirements, and execute the SEP-6 offramp for the cash portion automatically.
+Settlex introduces the **Karma İade (Split Refund)** logic. If a customer wants a partial cash refund and partial store credit, the agents calculate the split, verify return shipping requirements, and execute the SEP-6 offramp for the cash portion automatically.
 
 ### 🌍 Fully Bilingual (TR/EN)
 A unified interface and backend that supports seamless switching between Turkish and English. The AI agents dynamically adjust their negotiation tone, language, and cultural nuances based on the user's preference.
 
 ### 🔒 Enterprise-Grade Stateless API
-Kasa AI is built as a **stateless API engine** - perfect for enterprise integration. All context (rules, past invoices, wallet keys) is provided by the client in each request. No internal state storage, no database dependencies, pure functional architecture.
+Settlex is built as a **stateless API engine** - perfect for enterprise integration. All context (rules, past invoices, wallet keys) is provided by the client in each request. No internal state storage, no database dependencies, pure functional architecture.
 
 ---
 
@@ -53,7 +53,8 @@ Kasa AI is built as a **stateless API engine** - perfect for enterprise integrat
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Backend** | Python / FastAPI | High-performance async API |
-| **AI Engine** | Gemini 1.5 Flash | LLM-powered negotiation agents |
+| **AI Engine** | Gemini 1.5 Flash / text-embedding-004 | LLM-powered negotiation agents & vector embeddings |
+| **Vector Search** | NumPy 2.1.3 | Cosine similarity for RAG retrieval |
 | **Blockchain** | Stellar SDK 12.1.0 | SEP-6 Offramps, SEP-10 Auth, Multi-Sig |
 | **Frontend** | React 19 / Vite 8 / Tailwind CSS 4 | Real-time agent console |
 | **WebSocket** | Native WebSocket | Live agent communication |
@@ -160,7 +161,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client as Client
-    participant API as Kasa AI API
+    participant API as Settlex API
     participant Wallet as Stellar Wallet
     participant Anchor as Mock Anchor
     participant Horizon as Stellar Horizon

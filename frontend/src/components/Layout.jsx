@@ -19,7 +19,7 @@ export default function Layout({ children }) {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
           <NavLink to="/" className="group flex min-w-0 flex-col gap-1 no-underline sm:flex-row sm:items-center sm:gap-3">
             <span className="font-display text-2xl font-bold tracking-tight text-ink">
-              Kasa<span className="text-mint-dim"> AI</span>
+              Settlex
             </span>
             <JuryBadges />
           </NavLink>
@@ -55,7 +55,7 @@ export default function Layout({ children }) {
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
       <footer className="border-t border-ink/10 py-4 text-center text-xs text-ink/45">
-        Kasa AI · Pro Hackathon 2026 Genesis Track · Rise In × Stellar
+        Settlex · Pro Hackathon 2026 Genesis Track · Rise In × Stellar
       </footer>
     </div>
   )

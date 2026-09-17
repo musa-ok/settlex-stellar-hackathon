@@ -41,7 +41,7 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://loc
 ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
 
 app = FastAPI(
-    title="Kasa AI",
+    title="Settlex",
     description="Otonom ödeme ajanı — çevrimiçi ajan pazarlığı × Stellar × SEP-6/SEP-10",
     version="0.3.0",
 )
@@ -57,7 +57,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "kasa-ai"}
+    return {"status": "ok", "service": "settlex"}
 
 
 @app.post("/api/rules")
@@ -134,8 +134,8 @@ async def post_invoice_stateless(body: StatelessInvoiceRequest):
             original_wallet = None
         
         try:
-            # Execute negotiation with context
-            result = await negotiation_service.submit_invoice(invoice_data)
+            # Execute negotiation with context (including RAG past_invoices)
+            result = await negotiation_service.submit_invoice(invoice_data, past_invoices)
             return result
         finally:
             # Restore original state

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import numpy as np
+from typing import Optional, List
+
+import google.generativeai as genai
 
 from .llm_negotiation import append_log, apply_deal_rule, llm
 from .models import (
@@ -10,11 +13,20 @@ from .models import (
     InvoiceCreate,
     Negotiation,
     NegotiationStatus,
+    PastInvoice,
 )
 from .rules_engine import RuleEngine
 from .stellar_anchor import stellar_anchor_service
 from .store import store
 from .websocket_manager import ws_manager
+
+# ============================================================================
+# ON-THE-FLY RAG VECTOR SEARCH VIA COSINE SIMILARITY
+# ============================================================================
+# This module implements a real RAG (Retrieval-Augmented Generation) system
+# using Gemini embeddings and NumPy cosine similarity for semantic search.
+# It retrieves the most relevant past invoices to inform negotiation context.
+# ============================================================================
 
 # Mock RAG: kurumsal geçmiş alım hafızası (tedarikçi adı → son fatura)
 PAST_INVOICES = {
@@ -23,6 +35,7 @@ PAST_INVOICES = {
 
 
 def lookup_past_invoice(supplier: str) -> dict | None:
+    """Legacy mock lookup - kept for backward compatibility"""
     name = (supplier or "").strip()
     if name in PAST_INVOICES:
         return PAST_INVOICES[name]
@@ -31,6 +44,117 @@ def lookup_past_invoice(supplier: str) -> dict | None:
         if key.casefold() == folded:
             return record
     return None
+
+
+def _invoice_to_text(invoice: InvoiceCreate | PastInvoice) -> str:
+    """Convert invoice to text representation for embedding generation.
+    
+    Args:
+        invoice: Invoice object with supplier, product, quantity, amount
+        
+    Returns:
+        Text string representing the invoice for embedding
+    """
+    if hasattr(invoice, 'supplier'):
+        supplier = invoice.supplier
+        product = invoice.product
+        quantity = invoice.quantity
+        amount = invoice.amount
+    else:
+        # PastInvoice model
+        supplier = invoice.get('supplier', '')
+        product = invoice.get('product', '')
+        quantity = invoice.get('quantity', 0)
+        amount = invoice.get('amount', 0)
+    
+    return f"Tedarikçi: {supplier}, Ürün: {product}, Miktar: {quantity}, Tutar: {amount} TL"
+
+
+def _get_embedding(text: str) -> np.ndarray:
+    """Generate embedding for text using Gemini embedding model.
+    
+    Args:
+        text: Input text to embed
+        
+    Returns:
+        NumPy array representing the embedding vector
+        
+    Raises:
+        ValueError: If embedding generation fails
+    """
+    try:
+        model = genai.EmbeddingModel("models/text-embedding-004")
+        result = model.embed_content(text)
+        return np.array(result.embedding.values, dtype=np.float32)
+    except Exception as e:
+        raise ValueError(f"Embedding generation failed: {e}") from e
+
+
+def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+    """Calculate cosine similarity between two vectors.
+    
+    Args:
+        vec1: First embedding vector
+        vec2: Second embedding vector
+        
+    Returns:
+        Cosine similarity score between -1 and 1
+    """
+    dot_product = np.dot(vec1, vec2)
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+    
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    
+    return dot_product / (norm1 * norm2)
+
+
+def retrieve_relevant_invoices(
+    current_invoice: InvoiceCreate,
+    past_invoices: List[PastInvoice],
+    top_k: int = 3
+) -> List[PastInvoice]:
+    """Retrieve top-k most relevant past invoices using vector search.
+    
+    This function implements on-the-fly RAG by:
+    1. Generating embeddings for the current invoice
+    2. Generating embeddings for all past invoices
+    3. Calculating cosine similarity between current and each past invoice
+    4. Returning the top-k most similar invoices
+    
+    Args:
+        current_invoice: The invoice being negotiated
+        past_invoices: List of past invoices for RAG context
+        top_k: Number of top results to return (default: 3)
+        
+    Returns:
+        List of top-k most relevant past invoices, sorted by similarity
+    """
+    if not past_invoices:
+        return []
+    
+    try:
+        # Generate embedding for current invoice
+        current_text = _invoice_to_text(current_invoice)
+        current_embedding = _get_embedding(current_text)
+        
+        # Calculate similarities with all past invoices
+        similarities = []
+        for past_invoice in past_invoices:
+            past_text = _invoice_to_text(past_invoice)
+            past_embedding = _get_embedding(past_text)
+            similarity = _cosine_similarity(current_embedding, past_embedding)
+            similarities.append((similarity, past_invoice))
+        
+        # Sort by similarity (descending) and return top-k
+        similarities.sort(key=lambda x: x[0], reverse=True)
+        return [invoice for _, invoice in similarities[:top_k]]
+        
+    except Exception as e:
+        # Fallback to empty list if embedding fails
+        print(f"RAG retrieval failed: {e}")
+        return []
 
 
 class AgentNegotiationService:
@@ -56,34 +180,58 @@ class AgentNegotiationService:
         max_limit: float,
         fatura_tutari: float,
         seller_ask: float,
+        rag_context: Optional[List[PastInvoice]] = None,
     ) -> tuple[str, str]:
-        system = "Sen bir satın alma ajanısın."
+        """Generate buyer agent prompts with RAG context injection.
+        
+        Args:
+            neg: Current negotiation
+            max_limit: Budget limit
+            fatura_tutari: Current invoice amount
+            seller_ask: Seller's asking price
+            rag_context: Top-K relevant past invoices from RAG retrieval
+            
+        Returns:
+            Tuple of (system_prompt, user_prompt)
+        """
+        system = "Sen bir Settlex satın alma ajanısın."
         user = (
-            f"Sen bir satın alma ajanısın. Kesin limitin: {max_limit} TL. "
+            f"Sen bir Settlex satın alma ajanısın. Kesin limitin: {max_limit} TL. "
             f"Satıcının {seller_ask} TL teklifini analiz et. "
             "Limitin üstündeyse reddedip daha düşük bir karşı teklif ver."
         )
-        past = lookup_past_invoice(neg.supplier)
-        if past:
+        
+        # Inject RAG context if available (Top-3 most relevant invoices)
+        if rag_context:
+            rag_context_text = "\n".join([
+                f"- {inv.get('supplier', 'Unknown')}: {inv.get('product', 'Unknown')}, "
+                f"{inv.get('amount', 0)} TL (tarih: {inv.get('date', 'bilinmiyor')})"
+                for inv in rag_context
+            ])
+            
             rag_rule = (
-                "Eğer mevcut tedarikçi için geçmiş alım verisi bulunuyorsa, "
-                "pazarlığa kesinlikle bu referansı kullanarak başla. "
-                "Argümanını şu şekilde kur: "
-                f"'Kurumsal hafıza kayıtlarımıza göre {past['tarih']} sizden aynı ürünü "
-                f"{past['son_fiyat']} TL'ye temin etmişiz. Bize sunduğunuz "
-                f"{fatura_tutari:.2f} TL'lik yeni teklif piyasa enflasyonunun çok üzerinde. "
-                "Anlaşmayı sağlamak için fiyatı geçmiş alım seviyemize yaklaştırmalısınız.'"
+                "Kurumsal hafıza kayıtlarımıza (RAG) göre, bu tedarikçiyle geçmiş "
+                "işlemlerimiz aşağıdaki gibidir:\n"
+                f"{rag_context_text}\n\n"
+                "Bu geçmiş verileri referans alarak pazarlık yap. "
+                "Eğer mevcut teklif geçmiş fiyatların üzerindeyse, "
+                "kurumsal hafıza verilerini argüman olarak kullanarak "
+                "fiyatı geçmiş seviyelere yaklaştırmalarını talep et."
             )
             system = (
                 f"{system}\n"
-                f"Kurumsal hafıza (RAG) eşleşmesi: tedarikçi={neg.supplier}, "
-                f"ürün={past.get('urun')}, son_fiyat={past['son_fiyat']} TL, "
-                f"tarih={past['tarih']}.\n"
-                f"{rag_rule}"
+                f"=== KURUMSAL HAFIZA (RAG - Top-3 En Alakalı Faturalar) ===\n"
+                f"{rag_rule}\n"
+                f"============================================================"
             )
+        
         return system, user
 
-    async def submit_invoice(self, payload: InvoiceCreate) -> Negotiation:
+    async def submit_invoice(
+        self, 
+        payload: InvoiceCreate, 
+        past_invoices: Optional[List[PastInvoice]] = None
+    ) -> Negotiation:
         invoice = Invoice(**payload.model_dump())
         store.invoices[invoice.id] = invoice
 
@@ -116,8 +264,19 @@ class AgentNegotiationService:
             return neg
 
         max_limit = rule.budget_limit if rule else 450.0
+        
+        # Perform RAG retrieval if past_invoices provided
+        rag_context = None
+        if past_invoices:
+            rag_context = retrieve_relevant_invoices(invoice, past_invoices, top_k=3)
+        
         try:
-            await self._three_step_loop(neg, max_limit=max_limit, ask=invoice.amount)
+            await self._three_step_loop(
+                neg, 
+                max_limit=max_limit, 
+                ask=invoice.amount,
+                rag_context=rag_context
+            )
         except Exception as exc:
             await self._append_log(
                 neg,
@@ -129,7 +288,13 @@ class AgentNegotiationService:
             )
         return neg
 
-    async def _three_step_loop(self, neg: Negotiation, max_limit: float, ask: float) -> None:
+    async def _three_step_loop(
+        self, 
+        neg: Negotiation, 
+        max_limit: float, 
+        ask: float,
+        rag_context: Optional[List[PastInvoice]] = None
+    ) -> None:
         neg.status = NegotiationStatus.NEGOTIATING
         store.negotiations[neg.id] = neg
         ask = float(ask or 480)
@@ -148,7 +313,11 @@ class AgentNegotiationService:
 
         # Adım 2 — alıcı ajan (RAG kurumsal hafıza + bütçe limiti)
         buyer_system, buyer_user = self._buyer_prompts(
-            neg, max_limit=max_limit, fatura_tutari=ask, seller_ask=seller_ask
+            neg, 
+            max_limit=max_limit, 
+            fatura_tutari=ask, 
+            seller_ask=seller_ask,
+            rag_context=rag_context
         )
         buyer = await llm.complete(buyer_system, buyer_user)
         await self._append_log(

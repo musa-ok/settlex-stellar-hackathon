@@ -65,7 +65,7 @@ export default function Onboarding() {
             Stellar · Agent-to-Agent
           </p>
           <h1 className="font-display text-5xl font-bold leading-[1.05] tracking-tight md:text-7xl">
-            Kasa AI
+            Settlex
           </h1>
           <p className="mt-5 max-w-md text-lg leading-relaxed text-sand/75">
             {t('Ajan pazarlık ediyor, sen sadece izliyorsun — ödeme gerçek TL\'ye dönüşüyor.', 'Agents negotiate, you just watch — payment turns into real TRY.')}
