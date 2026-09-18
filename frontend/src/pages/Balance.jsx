@@ -26,9 +26,9 @@ export default function Balance() {
   }, [])
 
   function validateInputs() {
-    // Validate IBAN format (TR + 24 alphanumeric characters)
+    // Validate IBAN format (TR + 24 digits)
     const cleanIban = iban.replace(/\s/g, '')
-    const ibanRegex = /^TR\d{2}[A-Z0-9]{24}$/
+    const ibanRegex = /^TR\d{24}$/
     if (!ibanRegex.test(cleanIban)) {
       setValidationError(t('Geçersiz IBAN formatı (TRXX...)', 'Invalid IBAN format (TRXX...)'))
       return false
