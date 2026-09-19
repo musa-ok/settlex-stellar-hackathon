@@ -6,6 +6,7 @@ export function useAgentConsole() {
   const [turns, setTurns] = useState([])
   const [deal, setDeal] = useState(null)
   const [settlement, setSettlement] = useState(null)
+  const [fiatPayout, setFiatPayout] = useState(null)
   const [anchorSteps, setAnchorSteps] = useState([])
   const [negotiation, setNegotiation] = useState(null)
   const [connected, setConnected] = useState(false)
@@ -15,6 +16,7 @@ export function useAgentConsole() {
     setTurns([])
     setDeal(null)
     setSettlement(null)
+    setFiatPayout(null)
     setAnchorSteps([])
     setNegotiation(null)
   }
@@ -71,6 +73,9 @@ export function useAgentConsole() {
           if (msg.type === 'settlement') {
             setSettlement(msg)
           }
+          if (msg.type === 'fiat_payout') {
+            setFiatPayout(msg)
+          }
           if (msg.type === 'negotiation' && msg.data) {
             setNegotiation(msg.data)
           }
@@ -88,5 +93,5 @@ export function useAgentConsole() {
     }
   }, [])
 
-  return { logs, turns, deal, settlement, anchorSteps, negotiation, setNegotiation, connected, resetSession }
+  return { logs, turns, deal, settlement, fiatPayout, anchorSteps, negotiation, setNegotiation, connected, resetSession }
 }

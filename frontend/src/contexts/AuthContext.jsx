@@ -70,6 +70,15 @@ export function AuthProvider({ children }) {
     }
   }
 
+  // Signing step-up: prompts FaceID / TouchID again and returns a one-shot token
+  // for a single approval. It is not persisted, so the login session is unchanged.
+  async function confirmWithPasskey(name = username) {
+    const opts = await api.passkeyLoginOptions(name)
+    const credential = await getPasskey(opts.options || opts)
+    const session = await api.passkeyLoginVerify(name, credential)
+    return session.token
+  }
+
   async function logout() {
     try {
       await api.passkeyLogout(token)
@@ -92,6 +101,7 @@ export function AuthProvider({ children }) {
       register,
       login,
       logout,
+      confirmWithPasskey,
     }),
     [token, username, authenticated, busy, error],
   )

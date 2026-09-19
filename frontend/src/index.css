@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Fraunces", Georgia, serif;
+  --font-display: "Space Grotesk", "Outfit", system-ui, sans-serif;
   --font-sans: "Outfit", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
@@ -14,10 +14,18 @@
   --color-warn: #e8a838;
   --color-danger: #e85d4c;
   --color-panel: #0f2a20;
+
+  --shadow-soft: 0 1px 2px rgb(11 31 23 / 0.04), 0 12px 32px -16px rgb(11 31 23 / 0.22);
+  --shadow-lift: 0 2px 4px rgb(11 31 23 / 0.05), 0 24px 48px -20px rgb(11 31 23 / 0.35);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -28,13 +36,86 @@ body,
 
 body {
   margin: 0;
+  overflow-x: hidden;
   font-family: var(--font-sans);
   color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
   background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 220, 151, 0.18), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(20, 48, 40, 0.12), transparent 50%),
-    linear-gradient(165deg, #f3f7f4 0%, #e8efe9 45%, #dfeae3 100%);
-  background-attachment: fixed;
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 220, 151, 0.2), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(20, 48, 40, 0.1), transparent 50%),
+    linear-gradient(165deg, #f5f8f6 0%, #ecf2ee 45%, #e2ece6 100%);
+}
+
+@media (min-width: 1024px) {
+  body {
+    background-attachment: fixed;
+  }
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Shared UI primitives ---------- */
+
+@layer components {
+  .card {
+    @apply rounded-3xl border border-ink/[0.06] bg-white/85 backdrop-blur;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .card-inset {
+    @apply rounded-2xl border border-ink/[0.06] bg-sand/50;
+  }
+
+  .eyebrow {
+    @apply font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/45;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-ink/50;
+  }
+
+  .field {
+    @apply min-h-12 w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-base text-ink outline-none transition placeholder:text-ink/35 focus:border-mint-dim focus:ring-4 focus:ring-mint/20 sm:text-sm;
+  }
+
+  .btn {
+    @apply inline-flex min-h-12 select-none items-center justify-center gap-2 rounded-2xl px-5 py-3 text-center text-sm font-semibold leading-tight transition duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-primary {
+    @apply bg-ink text-mint shadow-lg shadow-ink/15 hover:bg-ink-soft;
+  }
+
+  .btn-mint {
+    @apply bg-mint text-ink shadow-lg shadow-mint/25 hover:bg-[#5ee6aa];
+  }
+
+  .btn-ghost {
+    @apply border border-ink/15 bg-white text-ink hover:border-ink/30 hover:bg-sand/60;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Messenger-style wallpaper behind the agent chat bubbles */
+  .chat-wallpaper {
+    background-color: #eef4f0;
+    background-image: radial-gradient(rgb(11 31 23 / 0.07) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
 }
 
 @keyframes fade-up {
@@ -111,6 +192,11 @@ body {
   width: 6px;
 }
 .terminal-scroll::-webkit-scrollbar-thumb {
-  background: #2a5a45;
+  background: rgb(11 31 23 / 0.18);
   border-radius: 4px;
+}
+
+.terminal-scroll {
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
 }

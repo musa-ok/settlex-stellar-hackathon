@@ -99,23 +99,24 @@ export default function Balance() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       <header>
-        <h1 className="font-display text-4xl font-bold text-ink">{t('Bakiye & Anchor', 'Balance & Anchor')}</h1>
-        <p className="mt-2 text-ink/60">
+        <p className="eyebrow">SEP-10 · SEP-6 · Stellar</p>
+        <h1 className="mt-1 text-3xl font-bold text-ink sm:text-4xl">{t('Bakiye & Anchor', 'Balance & Anchor')}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink/60 sm:text-base">
           {t('Mutabakat sonrası ajan cüzdanı SEP-10 ile doğrulanır, SEP-6 ile TR IBAN\'a çekim açılır, USDC on-chain gider.', 'After settlement, the agent wallet is verified via SEP-10, withdrawal to TR IBAN is opened via SEP-6, and USDC is transferred on-chain.')}
         </p>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
         {[
           { label: 'XLM', value: bal?.xlm },
           { label: 'USDC', value: bal?.usdc },
           { label: t('Çekilebilir TRY', 'Withdrawable TRY'), value: bal?.mock_try },
         ].map((c) => (
-          <div key={c.label} className="rounded-2xl border border-ink/10 bg-white/70 p-5">
-            <p className="font-mono text-xs uppercase tracking-wider text-ink/45">{c.label}</p>
-            <p className="mt-2 font-display text-3xl font-bold text-ink">
+          <div key={c.label} className="card flex items-baseline justify-between gap-3 px-5 py-4 sm:block sm:p-6">
+            <p className="eyebrow">{c.label}</p>
+            <p className="font-display text-2xl font-bold tabular-nums tracking-tight text-ink sm:mt-3 sm:text-3xl">
               {c.value != null ? Number(c.value).toFixed(2) : '—'}
             </p>
           </div>
@@ -123,73 +124,82 @@ export default function Balance() {
       </div>
 
       {bal?.public_key && (
-        <p className="break-all font-mono text-xs text-ink/45">{bal.public_key}</p>
+        <p className="break-all rounded-2xl bg-white/60 px-4 py-3 font-mono text-xs text-ink/50 ring-1 ring-ink/[0.05]">{bal.public_key}</p>
       )}
 
       <form
         onSubmit={withdraw}
-        className="rounded-2xl bg-ink p-6 text-sand md:max-w-lg"
+        className="relative overflow-hidden rounded-3xl bg-ink p-5 text-sand shadow-[var(--shadow-lift)] sm:p-7 md:max-w-lg"
       >
-        <h2 className="font-display text-2xl font-semibold text-mint">{t('Bankaya çek', 'Withdraw to bank')}</h2>
-        <p className="mt-1 text-sm text-sand/55">SEP-1 dynamic discovery · SEP-6 · SEP-10 ({t('API key yok', 'No API key')})</p>
-        <label className="mt-5 block text-xs font-medium text-sand/60">{t('Tutar (TL)', 'Amount (TL)')}</label>
+        <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-mint/15 blur-3xl" />
+        <h2 className="relative text-xl font-bold text-mint sm:text-2xl">{t('Bankaya çek', 'Withdraw to bank')}</h2>
+        <p className="relative mt-1 text-sm text-sand/55">SEP-1 dynamic discovery · SEP-6 · SEP-10 ({t('API key yok', 'No API key')})</p>
+        <label className="relative mt-5 mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-sand/55">{t('Tutar (TL)', 'Amount (TL)')}</label>
         <input
           type="number"
           step="0.01"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-sand/20 bg-panel px-3 py-2.5 text-sand outline-none focus:border-mint"
+          className="relative min-h-12 w-full rounded-2xl border border-sand/15 bg-panel px-4 py-3 text-base tabular-nums text-sand outline-none transition focus:border-mint focus:ring-4 focus:ring-mint/15 sm:text-sm"
         />
-        <label className="mt-4 block text-xs font-medium text-sand/60">IBAN (mock)</label>
+        <label className="relative mt-4 mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-sand/55">IBAN (mock)</label>
         <input
           value={iban}
           onChange={(e) => setIban(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-sand/20 bg-panel px-3 py-2.5 font-mono text-sm text-sand outline-none focus:border-mint"
+          className="relative min-h-12 w-full rounded-2xl border border-sand/15 bg-panel px-4 py-3 font-mono text-base text-sand outline-none transition focus:border-mint focus:ring-4 focus:ring-mint/15 sm:text-sm"
         />
         <button
           type="submit"
           disabled={isWithdrawing}
-          className="mt-5 w-full rounded-xl bg-mint py-3 text-sm font-bold text-ink hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
+          className="btn btn-mint relative mt-6 w-full font-bold"
         >
           {isWithdrawing ? t('İşleniyor...', 'Processing...') : t('Bankaya Çek', 'Withdraw to Bank')}
         </button>
         {validationError && (
-          <p className="mt-4 font-mono text-xs text-red-500">{validationError}</p>
+          <p className="relative mt-4 break-words font-mono text-xs text-red-400">{validationError}</p>
         )}
         {result && (
-          <p className={`mt-4 break-all font-mono text-xs ${result.ok ? 'text-mint' : 'text-red-500'}`}>
+          <p className={`relative mt-4 break-all font-mono text-xs ${result.ok ? 'text-mint' : 'text-red-400'}`}>
             {result.message}
           </p>
+        )}
+        {result?.fiat && (
+          <div className="relative mt-3 rounded-2xl bg-mint/10 px-4 py-3 ring-1 ring-mint/25">
+            <p className="font-display text-lg font-bold tabular-nums text-mint">
+              {result.fiat.amount_out} {result.fiat.currency} · {result.fiat.status}
+            </p>
+            {result.fiat.message && <p className="mt-1 break-words text-xs text-sand/70">{result.fiat.message}</p>}
+          </div>
         )}
       </form>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-ink">{t('On-chain mutabakatlar', 'On-chain settlements')}</h2>
-        <div className="overflow-x-auto rounded-2xl border border-ink/10 bg-white/60">
-          <table className="w-full min-w-[480px] text-left text-sm">
-            <thead className="border-b border-ink/10 font-mono text-xs uppercase text-ink/45">
+        <h2 className="mb-3 text-lg font-bold text-ink">{t('On-chain mutabakatlar', 'On-chain settlements')}</h2>
+        <div className="card overflow-hidden">
+          <table className="block w-full text-left text-sm sm:table">
+            <thead className="hidden border-b border-ink/[0.06] bg-sand/40 font-mono text-[11px] uppercase tracking-wider text-ink/45 sm:table-header-group">
               <tr>
-                <th className="px-4 py-3">{t('Tedarikçi', 'Supplier')}</th>
-                <th className="px-4 py-3">{t('Tutar', 'Amount')}</th>
-                <th className="px-4 py-3">tx_hash</th>
+                <th className="px-5 py-3 font-semibold">{t('Tedarikçi', 'Supplier')}</th>
+                <th className="px-5 py-3 font-semibold">{t('Tutar', 'Amount')}</th>
+                <th className="px-5 py-3 font-semibold">tx_hash</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block divide-y divide-ink/[0.05] sm:table-row-group">
               {sessions.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-6 text-ink/40">
+                <tr className="block sm:table-row">
+                  <td colSpan={3} className="block px-5 py-8 text-center text-ink/40 sm:table-cell">
                     {t('Henüz kayıtlı mutabakat yok', 'No persisted settlements yet')}
                   </td>
                 </tr>
               )}
               {sessions.map((s) => (
-                <tr key={s.id} className="border-t border-ink/5">
-                  <td className="px-4 py-3">{s.supplier}</td>
-                  <td className="px-4 py-3 font-semibold">{Number(s.amount).toFixed(2)}</td>
-                  <td className="px-4 py-3">
+                <tr key={s.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-4 py-4 transition hover:bg-sand/30 sm:table-row sm:p-0">
+                  <td className="min-w-0 truncate font-medium sm:px-5 sm:py-3.5">{s.supplier}</td>
+                  <td className="text-right font-semibold tabular-nums sm:px-5 sm:py-3.5 sm:text-left">{Number(s.amount).toFixed(2)}</td>
+                  <td className="col-span-2 min-w-0 sm:px-5 sm:py-3.5">
                     {s.explorer_url ? (
                       <a
-                        className="break-all font-mono text-xs text-mint-dim underline"
+                        className="block break-all font-mono text-xs text-mint-dim underline decoration-mint/40 underline-offset-2"
                         href={s.explorer_url}
                         target="_blank"
                         rel="noreferrer"
@@ -208,33 +218,35 @@ export default function Balance() {
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-ink">{t('İşlem geçmişi', 'Transaction history')}</h2>
-        <div className="overflow-x-auto rounded-2xl border border-ink/10 bg-white/60">
-          <table className="w-full min-w-[480px] text-left text-sm">
-            <thead className="border-b border-ink/10 font-mono text-xs uppercase text-ink/45">
+        <h2 className="mb-3 text-lg font-bold text-ink">{t('İşlem geçmişi', 'Transaction history')}</h2>
+        <div className="card overflow-hidden">
+          <table className="block w-full text-left text-sm sm:table">
+            <thead className="hidden border-b border-ink/[0.06] bg-sand/40 font-mono text-[11px] uppercase tracking-wider text-ink/45 sm:table-header-group">
               <tr>
-                <th className="px-4 py-3">{t('Tarih', 'Date')}</th>
-                <th className="px-4 py-3">{t('Tedarikçi', 'Supplier')}</th>
-                <th className="px-4 py-3">{t('Tutar', 'Amount')}</th>
-                <th className="px-4 py-3">{t('Durum', 'Status')}</th>
+                <th className="px-5 py-3 font-semibold">{t('Tarih', 'Date')}</th>
+                <th className="px-5 py-3 font-semibold">{t('Tedarikçi', 'Supplier')}</th>
+                <th className="px-5 py-3 font-semibold">{t('Tutar', 'Amount')}</th>
+                <th className="px-5 py-3 font-semibold">{t('Durum', 'Status')}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block divide-y divide-ink/[0.05] sm:table-row-group">
               {txs.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-ink/40">
+                <tr className="block sm:table-row">
+                  <td colSpan={4} className="block px-5 py-8 text-center text-ink/40 sm:table-cell">
                     {t('Henüz işlem yok', 'No transactions yet')}
                   </td>
                 </tr>
               )}
               {txs.map((t) => (
-                <tr key={t.id} className="border-t border-ink/5">
-                  <td className="px-4 py-3 font-mono text-xs">
+                <tr key={t.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-4 py-4 transition hover:bg-sand/30 sm:table-row sm:p-0">
+                  <td className="col-span-2 font-mono text-xs text-ink/50 sm:px-5 sm:py-3.5">
                     {new Date(t.created_at).toLocaleString('tr-TR')}
                   </td>
-                  <td className="px-4 py-3">{t.supplier}</td>
-                  <td className="px-4 py-3 font-semibold">{t.amount.toFixed(2)} {t.asset}</td>
-                  <td className="px-4 py-3 text-mint-dim">{t.status}</td>
+                  <td className="min-w-0 truncate font-medium sm:px-5 sm:py-3.5">{t.supplier}</td>
+                  <td className="text-right font-semibold tabular-nums sm:px-5 sm:py-3.5 sm:text-left">{t.amount.toFixed(2)} {t.asset}</td>
+                  <td className="col-span-2 sm:px-5 sm:py-3.5">
+                    <span className="chip bg-mint/15 font-mono normal-case tracking-normal text-mint-dim">{t.status}</span>
+                  </td>
                 </tr>
               ))}
             </tbody>

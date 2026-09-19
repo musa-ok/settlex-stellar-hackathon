@@ -11,8 +11,8 @@ function authHeaders(extra = {}) {
 
 async function req(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
-    headers: authHeaders(options.headers || {}),
     ...options,
+    headers: authHeaders(options.headers || {}),
   })
   if (!res.ok) {
     const text = await res.text()
@@ -37,6 +37,28 @@ export const api = {
     req('/api/anomaly/reject', { method: 'POST', body: JSON.stringify({ negotiation_id, approved: false }) }),
   approveMultisig: (negotiation_id) =>
     req('/api/multisig/approve', { method: 'POST', body: JSON.stringify({ negotiation_id, approved: true }) }),
+  // Approvals carry a one-shot token from a fresh Passkey assertion (see AuthContext.confirmWithPasskey).
+  approvePurchase: (negotiation_id, lang, stepUpToken) =>
+    req('/api/purchase/approve', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stepUpToken}` },
+      body: JSON.stringify({ negotiation_id, lang }),
+    }),
+  rejectPurchase: (negotiation_id, lang) =>
+    req('/api/purchase/reject', { method: 'POST', body: JSON.stringify({ negotiation_id, lang }) }),
+  approveReturn: (negotiation_id, lang, stepUpToken) =>
+    req('/api/refund/approve', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stepUpToken}` },
+      body: JSON.stringify({ negotiation_id, lang }),
+    }),
+  rejectReturn: (negotiation_id, lang) =>
+    req('/api/refund/reject', { method: 'POST', body: JSON.stringify({ negotiation_id, lang }) }),
+  walletAgent: () => req('/api/wallet/agent'),
+  fundAgentBuild: (source, amount, asset) =>
+    req('/api/wallet/fund-agent/build', { method: 'POST', body: JSON.stringify({ source, amount, asset }) }),
+  fundAgentSubmit: (source, signed_xdr) =>
+    req('/api/wallet/fund-agent/submit', { method: 'POST', body: JSON.stringify({ source, signed_xdr }) }),
   balance: (public_key) =>
     req(`/api/balance${public_key ? `?public_key=${encodeURIComponent(public_key)}` : ''}`),
   fundWallet: (public_key) =>

@@ -43,29 +43,30 @@ export default function Rules() {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6 sm:space-y-8">
       <header className="animate-fade-up max-w-2xl">
-        <h1 className="font-display text-4xl font-bold text-ink">{t('Kurallar', 'Rules')}</h1>
-        <p className="mt-2 text-ink/60">
+        <p className="eyebrow">RuleEngine</p>
+        <h1 className="mt-1 text-3xl font-bold text-ink sm:text-4xl">{t('Kurallar', 'Rules')}</h1>
+        <p className="mt-2 text-sm leading-relaxed text-ink/60 sm:text-base">
           {t('RuleEngine: doğal dille veya formla kural koy — ajan faturaları buna göre onaylar veya pazarlık eder.', 'RuleEngine: set rules via natural language or form — agents approve or negotiate invoices accordingly.')}
         </p>
       </header>
 
       <form
         onSubmit={fromNaturalLanguage}
-        className="animate-fade-up rounded-2xl border border-ink/10 bg-white/70 p-6 shadow-sm backdrop-blur"
+        className="card animate-fade-up p-4 sm:p-6"
       >
-        <label className="block text-sm font-semibold text-ink">{t('Doğal dil', 'Natural language')}</label>
+        <label className="field-label">{t('Doğal dil', 'Natural language')}</label>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
-          className="mt-2 w-full resize-y rounded-xl border border-ink/15 bg-sand/50 px-4 py-3 text-ink outline-none ring-mint focus:ring-2"
+          className="field resize-y leading-relaxed"
           placeholder={t('Örn: "OfisMarket Ltd. için max 300 TL öde"', 'e.g.: "Pay max 300 TL for OfficeMarket Ltd."')}
         />
         <button
           type="submit"
-          className="mt-4 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-mint transition hover:bg-ink-soft"
+          className="btn btn-primary mt-4 w-full sm:w-auto"
         >
           {t('Kuralı kaydet', 'Save rule')}
         </button>
@@ -73,17 +74,17 @@ export default function Rules() {
 
       <form
         onSubmit={fromForm}
-        className="grid gap-4 rounded-2xl border border-ink/10 bg-white/50 p-6 md:grid-cols-3"
+        className="card grid gap-3 p-4 sm:p-6 md:grid-cols-3"
       >
         <div className="md:col-span-3">
-          <h2 className="text-sm font-semibold text-ink">{t('veya form ile', 'or via form')}</h2>
+          <h2 className="text-base font-bold text-ink">{t('veya form ile', 'or via form')}</h2>
         </div>
         <input
           required
           placeholder={t('Tedarikçi', 'Supplier')}
           value={form.supplier}
           onChange={(e) => setForm({ ...form, supplier: e.target.value })}
-          className="rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-mint"
+          className="field"
         />
         <input
           type="number"
@@ -91,39 +92,39 @@ export default function Rules() {
           placeholder={t('Bütçe limiti (TL)', 'Budget limit (TL)')}
           value={form.budget_limit}
           onChange={(e) => setForm({ ...form, budget_limit: e.target.value })}
-          className="rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-mint"
+          className="field"
         />
         <input
           type="number"
           placeholder={t('Anomali eşiği', 'Anomaly threshold')}
           value={form.anomaly_threshold}
           onChange={(e) => setForm({ ...form, anomaly_threshold: e.target.value })}
-          className="rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-mint"
+          className="field"
         />
         <button
           type="submit"
-          className="rounded-xl border border-ink/20 px-4 py-2.5 text-sm font-semibold text-ink hover:bg-ink hover:text-mint md:col-span-3 md:w-fit"
+          className="btn btn-ghost w-full md:col-span-3 md:w-fit"
         >
           {t('Formdan ekle', 'Add from form')}
         </button>
       </form>
 
-      {msg && <p className="font-mono text-sm text-mint-dim">{msg}</p>}
+      {msg && <p className="break-words rounded-2xl bg-mint/10 px-4 py-3 font-mono text-sm text-mint-dim">{msg}</p>}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
         {rules.map((r) => (
           <article
             key={r.id}
-            className="rounded-2xl border border-ink/10 bg-ink p-5 text-sand"
+            className="relative flex flex-col overflow-hidden rounded-3xl bg-ink p-5 text-sand shadow-[var(--shadow-soft)] sm:p-6"
           >
-            <h3 className="font-display text-xl font-semibold text-mint">{r.supplier}</h3>
-            <dl className="mt-3 space-y-1 font-mono text-xs text-sand/70">
+            <h3 className="break-words text-lg font-bold text-mint sm:text-xl">{r.supplier}</h3>
+            <dl className="mt-3 space-y-1.5 font-mono text-xs text-sand/70">
               <div>{t('bütçe', 'budget')} ≤ {r.budget_limit.toFixed(2)} TL</div>
               <div>{t('anomali', 'anomaly')} &gt; {r.anomaly_threshold.toFixed(2)} TL</div>
               {r.product_hint && <div>{t('ürün', 'product')}: {r.product_hint}</div>}
             </dl>
             {r.raw_text && (
-              <p className="mt-3 border-t border-sand/10 pt-3 text-sm text-sand/55">{r.raw_text}</p>
+              <p className="mt-4 break-words border-t border-sand/10 pt-3 text-sm leading-relaxed text-sand/55">{r.raw_text}</p>
             )}
             <button
               type="button"
@@ -131,7 +132,7 @@ export default function Rules() {
                 await api.deleteRule(r.id)
                 await refresh()
               }}
-              className="mt-4 text-xs text-danger hover:underline"
+              className="mt-4 inline-flex min-h-10 w-fit items-center rounded-xl px-3 text-xs font-semibold text-danger ring-1 ring-danger/30 transition hover:bg-danger/10"
             >
               {t('Sil', 'Delete')}
             </button>
