@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-import tomllib
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # Python 3.9–3.10 (DigitalOcean / older runtimes)
 
 import httpx
 from stellar_sdk import (
@@ -25,17 +29,16 @@ from .models import AgentLog, TransactionRecord, ErrorResponse, ErrorDetail
 from .store import store
 from .websocket_manager import ws_manager
 
-ANCHOR_HOME = "https://tr-mock-anchor.fly.dev"
-TOML_URL = f"{ANCHOR_HOME}/.well-known/stellar.toml"
-HORIZON_URL = "https://horizon-testnet.stellar.org"
-FRIENDBOT_URL = "https://friendbot.stellar.org"
-NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+TEST_ANCHOR_HOME_DOMAIN = "testanchor.stellar.org"
+HORIZON_TESTNET = "https://horizon-testnet.stellar.org"
+HORIZON_PUBLIC = "https://horizon.stellar.org"
+FRIENDBOT_URL = "https://friendbot.stellar.org"
 DEFAULT_IBAN = "TR330006100519786457841326"
 KEY_FILE = Path(__file__).resolve().parent.parent / ".data" / "agent_secret"
 ANCHOR_TIMEOUT = 10.0
 FALLBACK_MSG = (
-    "Mock Anchor Sunucusu Yanıt Vermiyor. Fallback (Çevrimdışı Simülasyon) Moduna Geçildi. "
+    "Anchor sunucusu yanıt vermiyor. Fallback (çevrimdışı simülasyon) moduna geçildi. "
     "Ajan mutabakatı ve SEP-6 verileri lokal olarak onaylandı."
 )
 INSUFFICIENT_USDC_MSG = (
@@ -43,52 +46,172 @@ INSUFFICIENT_USDC_MSG = (
 )
 
 
+def _network_is_public() -> bool:
+    return os.environ.get("STELLAR_NETWORK", "TESTNET").upper() in {"PUBLIC", "MAINNET"}
+
+
+def _horizon_url() -> str:
+    return os.environ.get("HORIZON_URL") or (HORIZON_PUBLIC if _network_is_public() else HORIZON_TESTNET)
+
+
+def _network_passphrase() -> str:
+    if _network_is_public():
+        return Network.PUBLIC_NETWORK_PASSPHRASE
+    return Network.TESTNET_NETWORK_PASSPHRASE
+
+
+NETWORK_PASSPHRASE = _network_passphrase()
+HORIZON_URL = _horizon_url()
+
+
 class StellarAnchorService:
-    """SEP-10 + SEP-6 against tr-mock-anchor.fly.dev. Wallet signatures only — no API keys."""
+    """SEP-1 dynamic anchor discovery + SEP-10 / SEP-6. Wallet signatures only — no API keys."""
 
     def __init__(self) -> None:
-        self.horizon = Server(horizon_url=HORIZON_URL)
+        self.horizon = Server(horizon_url=_horizon_url())
         self._toml: Optional[dict[str, Any]] = None
         self._keypair: Optional[Keypair] = None
         self._last_horizon_error: Optional[str] = None
+        self._home_domain: Optional[str] = None
+        self._issuer_home_domain: Optional[str] = None
+        self._discovery_source: Optional[str] = None
 
-    def discover_toml(self) -> dict[str, Any]:
-        """Discover and parse stellar.toml with error handling"""
-        if self._toml:
-            return self._toml
-        
+    def _configured_asset(self) -> tuple[str, str]:
+        asset_code = (os.environ.get("ASSET_CODE") or "USDC").strip()
+        issuer = (os.environ.get("ASSET_ISSUER") or USDC_ISSUER).strip()
+        return asset_code, issuer
+
+    def _is_native_asset(self, asset_code: str, issuer: str) -> bool:
+        code = (asset_code or "").upper()
+        iss = (issuer or "").strip().lower()
+        return code in {"XLM", "NATIVE"} or iss in {"", "native", "xlm"}
+
+    def _is_strict_testing(self) -> bool:
+        mode = (os.environ.get("ANCHOR_MODE") or os.environ.get("SETTLEX_ANCHOR_MODE") or "").lower()
+        if mode in {"testing", "test", "strict", "strict-testing"}:
+            return True
+        flag = (os.environ.get("SETTLEX_STRICT_TESTING") or "").lower()
+        return flag in {"1", "true", "yes"}
+
+    def _normalize_home_domain(self, raw: str) -> str:
+        domain = (raw or "").strip()
+        for prefix in ("https://", "http://"):
+            if domain.lower().startswith(prefix):
+                domain = domain[len(prefix) :]
+        return domain.rstrip("/")
+
+    def discover_issuer_home_domain(self, issuer: str) -> str:
+        """SEP-1: resolve an asset issuer's home_domain from Horizon."""
         try:
-            resp = httpx.get(TOML_URL, timeout=ANCHOR_TIMEOUT)
-            resp.raise_for_status()
-        except httpx.TimeoutException as e:
+            account = self.horizon.accounts().account_id(issuer).call()
+        except NotFoundError as e:
             raise ValueError(
                 ErrorResponse(
-                    error="Anchor server timeout",
-                    error_code="ANCHOR_TIMEOUT",
+                    error="Asset issuer account not found",
+                    error_code="ISSUER_NOT_FOUND",
                     details=[
                         ErrorDetail(
-                            field="anchor",
-                            message=f"Failed to connect to anchor server (timeout): {str(e)}",
-                            code="CONNECTION_ERROR"
+                            field="issuer",
+                            message=f"Horizon has no account for issuer {issuer}",
+                            code="HORIZON_ERROR",
                         )
-                    ]
+                    ],
                 ).model_dump_json()
             ) from e
-        except httpx.HTTPStatusError as e:
+        except BaseHorizonError as e:
             raise ValueError(
                 ErrorResponse(
-                    error="Anchor server HTTP error",
-                    error_code="ANCHOR_HTTP_ERROR",
+                    error="Failed to query issuer account",
+                    error_code="ISSUER_LOOKUP_ERROR",
                     details=[
                         ErrorDetail(
-                            field="anchor",
-                            message=f"Anchor server returned HTTP {e.response.status_code}",
-                            code="HTTP_ERROR"
+                            field="issuer",
+                            message=f"Horizon error looking up issuer {issuer}: {str(e)}",
+                            code="HORIZON_ERROR",
                         )
-                    ]
+                    ],
                 ).model_dump_json()
             ) from e
-        except httpx.RequestError as e:
+
+        home_domain = (account.get("home_domain") or "").strip()
+        if not home_domain:
+            raise ValueError(
+                ErrorResponse(
+                    error="Issuer home_domain missing",
+                    error_code="MISSING_HOME_DOMAIN",
+                    details=[
+                        ErrorDetail(
+                            field="home_domain",
+                            message=f"Issuer {issuer} has no home_domain set on-chain",
+                            code="CONFIGURATION_ERROR",
+                        )
+                    ],
+                ).model_dump_json()
+            )
+        return self._normalize_home_domain(home_domain)
+
+    def _fetch_stellar_toml(self, home_domain: str) -> dict[str, Any]:
+        """Fetch and parse https://<home_domain>/.well-known/stellar.toml"""
+        domain = self._normalize_home_domain(home_domain)
+        urls = [
+            f"https://{domain}/.well-known/stellar.toml",
+            f"http://{domain}/.well-known/stellar.toml",
+        ]
+        last_error: Optional[Exception] = None
+        resp = None
+        for url in urls:
+            try:
+                resp = httpx.get(url, timeout=ANCHOR_TIMEOUT, follow_redirects=True)
+                resp.raise_for_status()
+                break
+            except httpx.TimeoutException as e:
+                last_error = e
+                raise ValueError(
+                    ErrorResponse(
+                        error="Anchor server timeout",
+                        error_code="ANCHOR_TIMEOUT",
+                        details=[
+                            ErrorDetail(
+                                field="anchor",
+                                message=f"Failed to connect to anchor server (timeout): {str(e)}",
+                                code="CONNECTION_ERROR",
+                            )
+                        ],
+                    ).model_dump_json()
+                ) from e
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if url == urls[-1]:
+                    raise ValueError(
+                        ErrorResponse(
+                            error="Anchor server HTTP error",
+                            error_code="ANCHOR_HTTP_ERROR",
+                            details=[
+                                ErrorDetail(
+                                    field="anchor",
+                                    message=f"Anchor server returned HTTP {e.response.status_code}",
+                                    code="HTTP_ERROR",
+                                )
+                            ],
+                        ).model_dump_json()
+                    ) from e
+            except httpx.RequestError as e:
+                last_error = e
+                if url == urls[-1]:
+                    raise ValueError(
+                        ErrorResponse(
+                            error="Anchor server connection error",
+                            error_code="ANCHOR_CONNECTION_ERROR",
+                            details=[
+                                ErrorDetail(
+                                    field="anchor",
+                                    message=f"Failed to connect to anchor server: {str(e)}",
+                                    code="CONNECTION_ERROR",
+                                )
+                            ],
+                        ).model_dump_json()
+                    ) from e
+        if resp is None:
             raise ValueError(
                 ErrorResponse(
                     error="Anchor server connection error",
@@ -96,13 +219,13 @@ class StellarAnchorService:
                     details=[
                         ErrorDetail(
                             field="anchor",
-                            message=f"Failed to connect to anchor server: {str(e)}",
-                            code="CONNECTION_ERROR"
+                            message=f"Failed to connect to anchor server: {str(last_error)}",
+                            code="CONNECTION_ERROR",
                         )
-                    ]
+                    ],
                 ).model_dump_json()
-            ) from e
-        
+            )
+
         try:
             parsed = tomllib.loads(resp.text)
         except tomllib.TOMLDecodeError as e:
@@ -114,14 +237,20 @@ class StellarAnchorService:
                         ErrorDetail(
                             field="stellar.toml",
                             message=f"Failed to parse stellar.toml: {str(e)}",
-                            code="PARSE_ERROR"
+                            code="PARSE_ERROR",
                         )
-                    ]
+                    ],
                 ).model_dump_json()
             ) from e
-        
+        return parsed
+
+    def _toml_transfer_endpoints(self, parsed: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
         web_auth = parsed.get("WEB_AUTH_ENDPOINT")
-        transfer = parsed.get("TRANSFER_SERVER")
+        transfer = parsed.get("TRANSFER_SERVER") or parsed.get("TRANSFER_SERVER_SEP0024")
+        return web_auth, transfer
+
+    def _commit_toml(self, parsed: dict[str, Any], home_domain: str, source: str) -> dict[str, Any]:
+        web_auth, transfer = self._toml_transfer_endpoints(parsed)
         if not web_auth or not transfer:
             raise ValueError(
                 ErrorResponse(
@@ -131,14 +260,60 @@ class StellarAnchorService:
                         ErrorDetail(
                             field="stellar.toml",
                             message="WEB_AUTH_ENDPOINT or TRANSFER_SERVER missing in stellar.toml",
-                            code="CONFIGURATION_ERROR"
+                            code="CONFIGURATION_ERROR",
                         )
-                    ]
+                    ],
                 ).model_dump_json()
             )
-        
+        parsed["WEB_AUTH_ENDPOINT"] = web_auth
+        parsed["TRANSFER_SERVER"] = transfer
         self._toml = parsed
+        self._home_domain = home_domain
+        self._discovery_source = source
+        print(
+            f"SEP-1 discovery source={source} home_domain={home_domain} "
+            f"WEB_AUTH_ENDPOINT={web_auth} TRANSFER_SERVER={transfer}"
+        )
         return parsed
+
+    def _load_test_anchor_toml(self, source: str = "testanchor-fallback") -> dict[str, Any]:
+        parsed = self._fetch_stellar_toml(TEST_ANCHOR_HOME_DOMAIN)
+        return self._commit_toml(parsed, TEST_ANCHOR_HOME_DOMAIN, source)
+
+    def discover_toml(self, issuer: Optional[str] = None, asset_code: Optional[str] = None) -> dict[str, Any]:
+        """SEP-1 discovery: issuer → home_domain → stellar.toml → WEB_AUTH_ENDPOINT + TRANSFER_SERVER."""
+        if self._toml:
+            return self._toml
+
+        configured_code, configured_issuer = self._configured_asset()
+        asset_code = (asset_code or configured_code).strip()
+        issuer = (issuer or configured_issuer).strip()
+
+        if self._is_native_asset(asset_code, issuer) or self._is_strict_testing():
+            reason = "native-xlm" if self._is_native_asset(asset_code, issuer) else "strict-testing"
+            print(f"SEP-1 skipped ({reason}); using official testnet anchor {TEST_ANCHOR_HOME_DOMAIN}")
+            return self._load_test_anchor_toml(f"testanchor-{reason}")
+
+        override = self._normalize_home_domain(os.environ.get("ANCHOR_HOME") or "")
+        if override:
+            parsed = self._fetch_stellar_toml(override)
+            return self._commit_toml(parsed, override, "anchor-home-override")
+
+        try:
+            home_domain = self.discover_issuer_home_domain(issuer)
+            self._issuer_home_domain = home_domain
+            parsed = self._fetch_stellar_toml(home_domain)
+            web_auth, transfer = self._toml_transfer_endpoints(parsed)
+            if web_auth and transfer:
+                return self._commit_toml(parsed, home_domain, "sep-1")
+            print(
+                f"SEP-1 home_domain={home_domain} has no WEB_AUTH_ENDPOINT/TRANSFER_SERVER; "
+                f"falling back to {TEST_ANCHOR_HOME_DOMAIN}"
+            )
+        except ValueError as e:
+            print(f"SEP-1 issuer discovery failed ({e}); falling back to {TEST_ANCHOR_HOME_DOMAIN}")
+
+        return self._load_test_anchor_toml("testanchor-fallback")
 
     def agent_keypair(self) -> Keypair:
         if self._keypair:
@@ -341,12 +516,13 @@ class StellarAnchorService:
         toml = self.discover_toml()
         transfer = toml["TRANSFER_SERVER"].rstrip("/")
         dest = (iban or DEFAULT_IBAN).replace(" ", "")
+        asset_code, _issuer = self._configured_asset()
         params = {
-            "asset_code": "USDC",
+            "asset_code": asset_code,
             "type": "bank_account",
             "amount": str(amount),
             "dest": dest,
-            "account": kp.public_key,
+            "account": account or kp.public_key,
         }
         headers = {"Authorization": f"Bearer {token}"}
         async with httpx.AsyncClient(timeout=ANCHOR_TIMEOUT) as client:
@@ -366,6 +542,11 @@ class StellarAnchorService:
             "ok": True,
             "protocol": "SEP-6",
             "auth": "SEP-10",
+            "discovery": self._discovery_source,
+            "home_domain": self._home_domain,
+            "issuer_home_domain": self._issuer_home_domain,
+            "web_auth_endpoint": toml["WEB_AUTH_ENDPOINT"],
+            "transfer_server": transfer,
             "amount": amount,
             "iban": dest,
             "account_id": account_id,
@@ -374,6 +555,60 @@ class StellarAnchorService:
             "token": token,
             "body": body,
             "message": f"SEP-6 treasury {account_id} memo={memo}",
+        }
+
+    async def sep6_deposit(
+        self,
+        amount: float,
+        iban: str = DEFAULT_IBAN,
+        sep10_token: Optional[str] = None,
+        account: Optional[str] = None,
+    ) -> dict[str, Any]:
+        kp = self.agent_keypair()
+        token = sep10_token or await self.sep10_authenticate(kp)
+        toml = self.discover_toml()
+        transfer = toml["TRANSFER_SERVER"].rstrip("/")
+        dest = (iban or DEFAULT_IBAN).replace(" ", "")
+        asset_code, _issuer = self._configured_asset()
+        params = {
+            "asset_code": asset_code,
+            "type": "bank_account",
+            "amount": str(amount),
+            "dest": dest,
+            "account": account or kp.public_key,
+        }
+        headers = {"Authorization": f"Bearer {token}"}
+        async with httpx.AsyncClient(timeout=ANCHOR_TIMEOUT) as client:
+            resp = await client.get(f"{transfer}/deposit", params=params, headers=headers)
+            if resp.status_code >= 400:
+                resp = await client.post(f"{transfer}/deposit", params=params, headers=headers)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"raw": resp.text}
+        if resp.status_code >= 400:
+            return {"ok": False, "status_code": resp.status_code, "body": body, "token": token}
+        account_id = self._extract_treasury(body)
+        memo = body.get("memo")
+        memo_type = body.get("memo_type") or "text"
+        return {
+            "ok": True,
+            "protocol": "SEP-6",
+            "auth": "SEP-10",
+            "operation": "deposit",
+            "discovery": self._discovery_source,
+            "home_domain": self._home_domain,
+            "issuer_home_domain": self._issuer_home_domain,
+            "web_auth_endpoint": toml["WEB_AUTH_ENDPOINT"],
+            "transfer_server": transfer,
+            "amount": amount,
+            "iban": dest,
+            "account_id": account_id,
+            "memo": memo,
+            "memo_type": memo_type,
+            "token": token,
+            "body": body,
+            "message": f"SEP-6 deposit {account_id} memo={memo}",
         }
 
     def _extract_treasury(self, body: dict[str, Any]) -> Optional[str]:
@@ -731,14 +966,21 @@ class StellarAnchorService:
     # Compatibility with older /api/sep10 routes (still wallet-signed, never API keys)
     def challenge(self, account: str) -> dict:
         toml = self.discover_toml()
-        resp = httpx.get(toml["WEB_AUTH_ENDPOINT"], params={"account": account}, timeout=ANCHOR_TIMEOUT)
+        resp = httpx.get(
+            toml["WEB_AUTH_ENDPOINT"],
+            params={"account": account},
+            timeout=ANCHOR_TIMEOUT,
+            follow_redirects=True,
+        )
         resp.raise_for_status()
         body = resp.json()
         return {
             "account": account,
             "network_passphrase": NETWORK_PASSPHRASE,
             "transaction": body.get("transaction"),
-            "home_domain": "tr-mock-anchor.fly.dev",
+            "home_domain": self._home_domain,
+            "issuer_home_domain": self._issuer_home_domain,
+            "discovery": self._discovery_source,
         }
 
     def verify(self, account: str, signed_transaction: str) -> dict:

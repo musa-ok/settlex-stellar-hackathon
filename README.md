@@ -16,7 +16,7 @@ The system doesn't just talk—it settles. Every successful negotiation culminat
 ### The Problem
 In B2B e-commerce and supply chains, inter-company invoice reconciliations and return processes take weeks and create high operational costs. Manual negotiations, multiple approval layers, and complex payment reconciliation workflows slow down business operations and create cash flow bottlenecks.
 
-### The Solution
+### Value Proposition
 Settlex uses LLM-based autonomous agents to resolve price and invoice negotiations between two companies in seconds without human intervention, ensuring instant on-chain settlement via the Stellar network. By automating the entire negotiation-to-payment pipeline, we eliminate friction, reduce operational overhead, and provide transparency through blockchain records.
 
 ### Target Audience
@@ -30,7 +30,7 @@ Settlex uses LLM-based autonomous agents to resolve price and invoice negotiatio
 - **Track:** Genesis Track
 - **Date:** September 19-20, 2026
 - **Location:** Grand Pera, Beyoğlu, Istanbul
-- **Mock Anchor:** [tr-mock-anchor.fly.dev](https://tr-mock-anchor.fly.dev)
+- **Fiat rail:** Production-ready Dynamic SEP-1 Anchor Discovery (issuer `home_domain` → `stellar.toml` → live `WEB_AUTH_ENDPOINT` / `TRANSFER_SERVER`; official `testanchor.stellar.org` fallback)
 - **Architecture:** **Stateless API** - Enterprise-grade, context-based, no internal state storage
 - **Network:** Stellar Testnet
 - **Asset:** USDC (GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5)
@@ -57,6 +57,9 @@ A unified interface and backend that supports seamless switching between Turkish
 ### 🔒 Enterprise-Grade Stateless API
 Settlex is built as a **stateless API engine** - perfect for enterprise integration. All context (rules, past invoices, wallet keys) is provided by the client in each request. No internal state storage, no database dependencies, pure functional architecture.
 
+### 🛰️ Production-ready Dynamic SEP-1 Anchor Discovery
+Anchors are no longer hardcoded. Settlex looks up the asset issuer on Horizon, reads `home_domain`, fetches `/.well-known/stellar.toml`, and routes SEP-10 / SEP-6 through the discovered `WEB_AUTH_ENDPOINT` and `TRANSFER_SERVER`. Native XLM and strict testing fall back to the official Stellar testnet anchor (`testanchor.stellar.org`).
+
 ---
 
 ## 🏗️ Architecture
@@ -68,11 +71,11 @@ Settlex is built as a **stateless API engine** - perfect for enterprise integrat
 | **Backend** | Python / FastAPI | High-performance async API |
 | **AI Engine** | Gemini 1.5 Flash / text-embedding-004 | LLM-powered negotiation agents & vector embeddings |
 | **Vector Search** | NumPy 2.1.3 | Cosine similarity for RAG retrieval |
-| **Blockchain** | Stellar SDK 12.1.0 | SEP-6 Offramps, SEP-10 Auth, Multi-Sig |
+| **Blockchain** | Stellar SDK 12.1.0 | SEP-1 discovery, SEP-6 offramps, SEP-10 auth, Multi-Sig |
 | **Frontend** | React 19 / Vite 8 / Tailwind CSS 4 | Real-time agent console |
 | **WebSocket** | Native WebSocket | Live agent communication |
 | **Validation** | Pydantic 2.10 | Enterprise-grade input validation |
-| **HTTP Client** | httpx 0.28.1 | Async HTTP requests |
+| **HTTP Client** | httpx 0.28.1 | Horizon + stellar.toml + SEP-6/SEP-10 requests |
 
 ### System Architecture
 
@@ -97,6 +100,7 @@ graph TB
     end
     
     subgraph "Stellar Layer"
+        SEP1[SEP-1 Dynamic Discovery]
         SEP10[SEP-10 Auth]
         SEP6[SEP-6 Offramp]
         DEX[DEX USDC Purchase]
@@ -104,7 +108,8 @@ graph TB
     end
     
     subgraph "External"
-        MockAnchor[tr-mock-anchor.fly.dev]
+        Toml[stellar.toml WEB_AUTH + TRANSFER_SERVER]
+        TestAnchor[testanchor.stellar.org fallback]
         Friendbot[Friendbot]
     end
     
@@ -119,8 +124,13 @@ graph TB
     ReturnAgent --> LLM
     Negotiation --> SEP10
     ReturnAgent --> SEP10
-    SEP10 --> MockAnchor
-    SEP6 --> MockAnchor
+    SEP10 --> SEP1
+    SEP6 --> SEP1
+    SEP1 --> Horizon
+    SEP1 --> Toml
+    SEP1 --> TestAnchor
+    SEP10 --> Toml
+    SEP6 --> Toml
     DEX --> Horizon
     Horizon --> Friendbot
     SEP6 --> DEX
@@ -138,7 +148,7 @@ sequenceDiagram
     participant Seller as Seller Agent (LLM)
     participant Rules as Rules Engine
     participant Stellar as Stellar Network
-    participant Anchor as Mock Anchor
+    participant Anchor as Discovered Anchor (SEP-1)
     
     Client->>API: POST /api/invoice/stateless<br/>{invoice, context, rules}
     API->>Rules: Evaluate Invoice
@@ -151,8 +161,10 @@ sequenceDiagram
         Seller-->>API: Price + Message
         API->>Buyer: Final Offer
         Buyer-->>API: DEAL
-        API->>Stellar: SEP-10 Auth
-        Stellar-->>API: JWT Token
+        API->>Stellar: SEP-1 issuer home_domain + stellar.toml
+        Stellar-->>API: WEB_AUTH_ENDPOINT + TRANSFER_SERVER
+        API->>Anchor: SEP-10 Auth
+        Anchor-->>API: JWT Token
         API->>Anchor: SEP-6 Withdraw Request
         Anchor-->>API: Treasury + Memo
         API->>Stellar: Send USDC with Memo
@@ -176,10 +188,14 @@ sequenceDiagram
     participant Client as Client
     participant API as Settlex API
     participant Wallet as Stellar Wallet
-    participant Anchor as Mock Anchor
+    participant Anchor as Discovered Anchor (SEP-1)
     participant Horizon as Stellar Horizon
     
     Client->>API: POST /api/anchor/withdraw<br/>{amount, iban}
+    API->>Horizon: SEP-1 lookup issuer home_domain
+    Horizon-->>API: home_domain
+    API->>Anchor: GET /.well-known/stellar.toml
+    Anchor-->>API: WEB_AUTH_ENDPOINT + TRANSFER_SERVER
     API->>Wallet: SEP-10 Challenge
     Wallet-->>API: Signed Challenge
     API->>Anchor: POST /auth (Signed TX)
@@ -245,8 +261,11 @@ STELLAR_SECRET_KEY=  # Optional: Auto-generated if not provided
 # CORS Security (comma-separated origins)
 ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 
-# Anchor Configuration (defaults provided)
-# ANCHOR_HOME=https://tr-mock-anchor.fly.dev
+# Dynamic SEP-1 discovery (no hardcoded mock anchor)
+# ASSET_CODE=USDC
+# ASSET_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+# ANCHOR_MODE=testing          # optional: force official testanchor.stellar.org
+# ANCHOR_HOME=testanchor.stellar.org  # optional: pin a fiat-rail domain
 # HORIZON_URL=https://horizon-testnet.stellar.org
 # FRIENDBOT_URL=https://friendbot.stellar.org
 ```
@@ -401,10 +420,11 @@ Content-Type: application/json
 
 ### 5. Settlement
 - Once a "DEAL" is reached, the system automatically:
-  - Authenticates via SEP-10
-  - Initiates SEP-6 off-ramp
-  - Sends USDC on-chain to Mock Anchor treasury
-  - Anchor simulates TRY payout to IBAN
+  - Discovers the fiat rail via **SEP-1** (issuer `home_domain` → `stellar.toml`)
+  - Authenticates via SEP-10 on the discovered `WEB_AUTH_ENDPOINT`
+  - Initiates SEP-6 off-ramp on the discovered `TRANSFER_SERVER`
+  - Sends USDC on-chain to the anchor treasury
+  - Anchor completes the fiat payout path (or official testnet fallback)
 
 ### 6. Verification
 - Verify the transaction on [Stellar Expert](https://stellar.expert)
@@ -420,6 +440,7 @@ Content-Type: application/json
 - Real-time agent negotiation console
 - B2B invoice negotiation with RAG
 - B2C split refund logic
+- Production-ready Dynamic SEP-1 Anchor Discovery
 - SEP-10 authentication flow
 - SEP-6 off-ramp execution
 - Multi-sig CFO approval
@@ -513,37 +534,39 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 
 ---
 
-## 📚 Mock Anchor Integration
+## 📚 Production-ready Dynamic SEP-1 Anchor Discovery
+
+Settlex does **not** hardcode a mock anchor URL. The fiat rail is resolved at runtime:
+
+1. Read the asset issuer (default: testnet USDC `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`).
+2. Query Stellar Horizon for the issuer's on-chain `home_domain`.
+3. Fetch `https://<home_domain>/.well-known/stellar.toml`.
+4. Extract `WEB_AUTH_ENDPOINT` (SEP-10) and `TRANSFER_SERVER` (SEP-6).
+5. If the asset is native XLM, `ANCHOR_MODE=testing`, or the issuer TOML has no transfer endpoints, fall back to the official Stellar testnet anchor: **`testanchor.stellar.org`**.
 
 ### Anchor Details
 
-- **Home Domain:** `tr-mock-anchor.fly.dev`
-- **Network:** Stellar Testnet
-- **Asset:** USDC
+- **Discovery:** Production-ready Dynamic SEP-1 Anchor Discovery
+- **Fallback home domain:** `testanchor.stellar.org`
+- **Network:** Stellar Testnet (or Public when `STELLAR_NETWORK=PUBLIC`)
+- **Asset:** USDC (configurable via `ASSET_CODE` / `ASSET_ISSUER`)
 - **USDC Issuer:** `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`
-- **Treasury:** `GCLCZEQZ2THTEDAOFI66LACNPLY4OBKN7VKLEZFMBIHYKYQOW2W7T3Z6`
 
 ### SEP Standards Implemented
 
-- **SEP-1:** stellar.toml discovery
-- **SEP-6:** Deposit/Withdraw operations
-- **SEP-10:** Challenge-response authentication
-- **SEP-12:** Simulated KYC (auto-approved)
-- **SEP-38:** Price quotes (optional)
-
-### Limits
-
-- **Deposit:** 50.00 - 3,000 TRY
-- **Withdraw:** Minimum 1.0000000 USDC
-- **TRY:** 2 decimal places
-- **USDC:** 7 decimal places
+- **SEP-1:** Dynamic `stellar.toml` discovery from issuer `home_domain`
+- **SEP-6:** Deposit/Withdraw against the discovered transfer server
+- **SEP-10:** Challenge-response authentication against the discovered web auth endpoint
+- **SEP-12:** KYC as published by the discovered anchor
+- **SEP-38:** Price quotes when advertised in `stellar.toml`
 
 ---
 
 ## 🌐 Resources
 
-- **Mock Anchor:** [https://tr-mock-anchor.fly.dev](https://tr-mock-anchor.fly.dev)
-- **Mock Anchor Explorer:** [https://tr-mock-anchor.fly.dev/explorer](https://tr-mock-anchor.fly.dev/explorer)
+- **SEP-1 Stellar Info File:** [https://developers.stellar.org/docs/tokens/stellar-toml](https://developers.stellar.org/docs/tokens/stellar-toml)
+- **Official Testnet Anchor:** [https://testanchor.stellar.org](https://testanchor.stellar.org)
+- **Test Anchor stellar.toml:** [https://testanchor.stellar.org/.well-known/stellar.toml](https://testanchor.stellar.org/.well-known/stellar.toml)
 - **Stellar Developer Docs:** [https://developers.stellar.org](https://developers.stellar.org)
 - **Stellar Lab:** [https://lab.stellar.org](https://lab.stellar.org)
 - **Stellar Expert:** [https://stellar.expert](https://stellar.expert)
@@ -564,15 +587,17 @@ This is a hackathon submission. For inquiries or collaboration, please contact t
 
 ---
 
-## � Team (Who Built It)
+## 👥 Team (Who Built It)
 
-- **Musa Ok** - Lead Backend & AI Agent Developer
-- **Şahin Kara** - Technical Documentation & Architecture
-- **Delil Çiya Avcı** - Product Strategy & Presentation
+| Name | Role |
+|------|------|
+| **Musa Ok** | Lead Backend & AI Agent Developer |
+| **Şahin Kara** | Technical Documentation & Architecture |
+| **Delil Çiya Avcı** | Product Strategy & Presentation |
 
 ---
 
-## �📄 License
+## 📄 License
 
 MIT License - Developed for the Rise In × Stellar Pro Hackathon 2026
 
@@ -584,6 +609,16 @@ MIT License - Developed for the Rise In × Stellar Pro Hackathon 2026
 - **Stellar Development Foundation** for the blockchain infrastructure
 - **Google** for Gemini 1.5 Flash AI
 - **Mock Anchor Team** for the testnet TRY/USDC ramp
+
+---
+
+## 🗺️ Post-Hackathon Roadmap
+
+| Timeline | Milestone |
+|----------|-----------|
+| **Q4 2026** | Transition from testnet mock anchor to a real TR fiat anchor integration (e.g., stablecoin TRYB). |
+| **Q1 2027** | Implementation of advanced escrow logic using Soroban smart contracts. |
+| **Q2 2027** | Stellar Community Fund (SCF) application and mainnet launch. |
 
 ---
 

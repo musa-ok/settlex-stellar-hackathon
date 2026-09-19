@@ -2,6 +2,7 @@
 
 # Python / Backend
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -37,11 +38,14 @@ dmypy.json
 .pytype/
 .tox/
 .venv/
+.venv
 env/
 venv/
+venv
 ENV/
 env.bak/
 venv.bak/
+virtualenv/
 .spyderproject
 .spyproject
 .ropeproject
@@ -78,8 +82,11 @@ dist-ssr/
 .pnp.*
 .pnp.js
 
-# Security - CRITICAL
+# Security - CRITICAL (never commit API keys, wallets, or secrets)
 .env
+.env.*
+!.env.example
+!**/.env.example
 .env.local
 .env.development.local
 .env.test.local
@@ -88,9 +95,15 @@ dist-ssr/
 *.key
 *.pem
 *.crt
+*.p12
+*.secret
+agent_secret
+id_rsa
+id_rsa.pub
 secrets/
 credentials/
 config/secrets.json
+.data/
 backend/.data/
 
 # IDE

@@ -357,7 +357,7 @@ async def transactions():
 
 @app.post("/api/anchor/withdraw")
 async def anchor_withdraw(body: WithdrawRequest):
-    """SEP-6 withdraw via tr-mock-anchor. Auth: SEP-10 wallet signature only."""
+    """SEP-6 withdraw via dynamically discovered TRANSFER_SERVER (SEP-1). Auth: SEP-10 wallet signature only."""
     return await stellar_anchor_service.execute_offramp(
         amount=body.amount,
         iban=body.iban,

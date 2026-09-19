@@ -3,6 +3,7 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 stellar-sdk==12.1.0
 httpx==0.28.1
+tomli==2.2.1
 python-multipart==0.0.20
 websockets==14.1
 google-generativeai>=0.8.5
