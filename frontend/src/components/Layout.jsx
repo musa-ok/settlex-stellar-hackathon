@@ -61,14 +61,24 @@ export default function Layout({ children }) {
                 {t('Passkey', 'Passkey')} · {auth.username}
               </button>
             ) : (
-              <button
-                type="button"
-                disabled={auth.busy}
-                onClick={() => auth.login().catch(() => auth.register().catch(() => {}))}
-                className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-mint"
-              >
-                {auth.busy ? t('Doğrulanıyor…', 'Verifying…') : t('Passkey ile giriş', 'Login with Passkey')}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={auth.busy}
+                  onClick={() => auth.register()}
+                  className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-mint"
+                >
+                  {auth.busy ? t('Kaydediliyor…', 'Registering…') : t('Register Passkey', 'Register Passkey')}
+                </button>
+                <button
+                  type="button"
+                  disabled={auth.busy}
+                  onClick={() => auth.login()}
+                  className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-mint"
+                >
+                  {auth.busy ? t('Doğrulanıyor…', 'Verifying…') : t('Login Passkey', 'Login Passkey')}
+                </button>
+              </div>
             )}
           </div>
         </div>

@@ -78,6 +78,11 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Settlex API is running"}
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "settlex"}
