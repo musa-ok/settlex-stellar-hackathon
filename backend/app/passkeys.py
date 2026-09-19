@@ -115,6 +115,31 @@ def require_passkey_user(request: Request) -> User:
     return user
 
 
+STEP_UP_MAX_AGE = timedelta(seconds=60)
+
+
+def require_fresh_passkey(request: Request) -> User:
+    """Step-up auth for signing a payment: the bearer token must come from a
+    WebAuthn assertion (FaceID / TouchID) made moments ago, and works only once."""
+    token = bearer_token(request)
+    with session_scope() as db:
+        row = db.query(AuthSession).filter(AuthSession.token == token).one_or_none() if token else None
+        if not row or row.created_at < datetime.utcnow() - STEP_UP_MAX_AGE:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error": "Biometric confirmation required",
+                    "error_code": "PASSKEY_STEP_UP_REQUIRED",
+                    "message": "Confirm this approval with your Passkey (FaceID / TouchID)",
+                },
+            )
+        user = db.query(User).filter(User.id == row.user_id).one()
+        db.expunge(user)
+        db.delete(row)
+    current_user_id.set(user.id)
+    return user
+
+
 @router.post("/register/options")
 async def register_options(body: UsernameBody, request: Request):
     user = _get_or_create_user(body.username)

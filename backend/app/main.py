@@ -14,13 +14,23 @@ from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, HTTPExcept
 from fastapi.middleware.cors import CORSMiddleware
 
 from .agent_negotiation import negotiation_service
+from .approvals import SettlementFailed
 from .auth_context import current_user_id
 from .db import NegotiationSession, init_db, session_scope
-from .passkeys import require_passkey_user, router as passkey_router, user_from_token, bearer_token
+from .passkeys import (
+    require_fresh_passkey,
+    require_passkey_user,
+    router as passkey_router,
+    user_from_token,
+    bearer_token,
+)
 from .return_agent import return_agent
 from .stellar_anchor import stellar_anchor_service
 from .models import (
     AnomalyAction,
+    ApprovalRequest,
+    Negotiation,
+    NegotiationStatus,
     InvoiceCreate,
     ReturnCreate,
     Rule,
@@ -36,6 +46,7 @@ from .models import (
 from .rules_engine import RuleEngine
 from .stellar_client import stellar_service
 from .store import store
+from .wallet_funding import router as wallet_router
 from .websocket_manager import ws_manager
 
 rule_engine = RuleEngine()
@@ -58,6 +69,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(passkey_router)
+app.include_router(wallet_router)
 
 
 @app.middleware("http")
@@ -288,22 +300,101 @@ async def get_negotiation(neg_id: str):
     return store.negotiations[neg_id]
 
 
+# An anomalous invoice frozen for the CFO's second signature.
+AWAITING_CFO = (NegotiationStatus.PENDING_MULTISIG, NegotiationStatus.AWAITING_APPROVAL)
+
+
 @app.post("/api/anomaly/approve")
-async def anomaly_approve(body: AnomalyAction, lang: str | None = None):
-    """Approve anomaly (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
+async def anomaly_approve(body: AnomalyAction, lang: str | None = None, _user=Depends(require_passkey_user)):
+    """CFO approves a frozen anomalous invoice (Passkey session; only while it awaits the CFO)."""
+    _pending_negotiation(body.negotiation_id, AWAITING_CFO)
     return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=True, lang=lang)
 
 
 @app.post("/api/anomaly/reject")
-async def anomaly_reject(body: AnomalyAction, lang: str | None = None):
-    """Reject anomaly (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
+async def anomaly_reject(body: AnomalyAction, lang: str | None = None, _user=Depends(require_passkey_user)):
+    """CFO rejects a frozen anomalous invoice (Passkey session; only while it awaits the CFO)."""
+    _pending_negotiation(body.negotiation_id, AWAITING_CFO)
     return await negotiation_service.resolve_anomaly(body.negotiation_id, approved=False, lang=lang)
 
 
 @app.post("/api/multisig/approve")
-async def multisig_approve(body: AnomalyAction, lang: str | None = None):
-    """Approve multisig (DEPRECATED: Stateless API doesn't support multi-step approvals)"""
+async def multisig_approve(body: AnomalyAction, lang: str | None = None, _user=Depends(require_passkey_user)):
+    """CFO second signature (Passkey session; only while the invoice awaits the CFO, so it
+    cannot be used to settle a pending purchase without the biometric step-up or to pay twice)."""
+    _pending_negotiation(body.negotiation_id, AWAITING_CFO)
     return await negotiation_service.approve_multisig(body.negotiation_id, lang=lang)
+
+
+def _pending_negotiation(
+    negotiation_id: str, expected: NegotiationStatus | tuple[NegotiationStatus, ...]
+) -> Negotiation:
+    allowed = expected if isinstance(expected, tuple) else (expected,)
+    neg = store.negotiations.get(negotiation_id)
+    if neg is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "Negotiation not found",
+                "error_code": "NOT_FOUND",
+                "message": f"Negotiation {negotiation_id} not found in local store",
+            },
+        )
+    if neg.status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "Negotiation is not awaiting this approval",
+                "error_code": "INVALID_STATUS",
+                "message": f"Expected {' or '.join(a.value for a in allowed)}, got {neg.status.value}",
+            },
+        )
+    return neg
+
+
+def _settlement_failed(exc: SettlementFailed) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail={
+            "error": "Stellar settlement failed — payment is pending again, you can retry",
+            "error_code": "SETTLEMENT_FAILED",
+            "message": str(exc),
+        },
+    )
+
+
+@app.post("/api/purchase/approve")
+async def purchase_approve(body: ApprovalRequest, _user=Depends(require_fresh_passkey)):
+    """Maker-Checker: manager releases a PENDING_APPROVAL purchase → Stellar → COMPLETED."""
+    _pending_negotiation(body.negotiation_id, NegotiationStatus.PENDING_APPROVAL)
+    try:
+        return await negotiation_service.approve_purchase(body.negotiation_id, lang=body.lang)
+    except SettlementFailed as exc:
+        raise _settlement_failed(exc) from exc
+
+
+@app.post("/api/purchase/reject")
+async def purchase_reject(body: ApprovalRequest, _user=Depends(require_passkey_user)):
+    """Maker-Checker: manager cancels a PENDING_APPROVAL purchase → REJECTED, nothing is paid."""
+    _pending_negotiation(body.negotiation_id, NegotiationStatus.PENDING_APPROVAL)
+    return await negotiation_service.reject_purchase(body.negotiation_id, lang=body.lang)
+
+
+@app.post("/api/refund/approve")
+async def refund_approve(body: ApprovalRequest, _user=Depends(require_fresh_passkey)):
+    """Escrow: seller confirms the returned parcel → SEP-6 refund → COMPLETED."""
+    _pending_negotiation(body.negotiation_id, NegotiationStatus.PENDING_INSPECTION)
+    try:
+        return await return_agent.approve_return(body.negotiation_id)
+    except SettlementFailed as exc:
+        raise _settlement_failed(exc) from exc
+
+
+@app.post("/api/refund/reject")
+async def refund_reject(body: ApprovalRequest, _user=Depends(require_passkey_user)):
+    """Escrow: seller refuses the parcel (lost / damaged) → REJECTED, nothing is paid."""
+    _pending_negotiation(body.negotiation_id, NegotiationStatus.PENDING_INSPECTION)
+    return await return_agent.reject_return(body.negotiation_id)
 
 
 @app.get("/api/balance")
@@ -412,8 +503,8 @@ async def list_sessions(_user=Depends(require_passkey_user)):
 
 
 @app.post("/api/anchor/withdraw")
-async def anchor_withdraw(body: WithdrawRequest):
-    """SEP-6 withdraw via dynamically discovered TRANSFER_SERVER (SEP-1). Auth: SEP-10 wallet signature only."""
+async def anchor_withdraw(body: WithdrawRequest, _user=Depends(require_passkey_user)):
+    """SEP-6 withdraw via dynamically discovered TRANSFER_SERVER (SEP-1). Requires a Passkey session."""
     return await stellar_anchor_service.execute_offramp(
         amount=body.amount,
         iban=body.iban,

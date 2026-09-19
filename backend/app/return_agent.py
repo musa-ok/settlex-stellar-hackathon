@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import re
 
+from .auth_context import current_user_id
+from .approvals import reject_pending, settle_pending
+from .db import record_pending
 from .llm_negotiation import append_log, llm
 from .models import Invoice, Negotiation, NegotiationStatus, ErrorResponse, ErrorDetail
-from .stellar_anchor import DEFAULT_IBAN, stellar_anchor_service
+from .stellar_anchor import DEFAULT_IBAN
 from .store import store
 from .websocket_manager import ws_manager
 
@@ -381,22 +384,60 @@ class ReturnAgentService:
         await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
 
     async def _close_cash(self, neg: Negotiation, amount: float) -> None:
+        """Escrow: the cash refund is agreed but held until the returned item arrives."""
         neg.agreed_amount = amount
         neg.current_amount = amount
+        neg.flow = "refund"
+        neg.status = NegotiationStatus.PENDING_INSPECTION
+        store.negotiations[neg.id] = neg
+        record_pending(
+            negotiation_id=neg.id,
+            supplier="iade",
+            amount=amount,
+            status=NegotiationStatus.PENDING_INSPECTION.value,
+            user_id=current_user_id.get(),
+        )
+        await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
+        await ws_manager.broadcast(
+            {
+                "type": "anchor_step",
+                "message": (
+                    f"Escrow: {amount:.2f} TL nakit iade kargo kontrolüne kadar bekletiliyor "
+                    "(PENDING_INSPECTION)."
+                ),
+                "level": "warn",
+            }
+        )
+
+    async def approve_return(self, negotiation_id: str) -> Negotiation:
+        """Seller confirmed the returned parcel: release the escrowed refund via SEP-6."""
+        neg = store.negotiations[negotiation_id]
+        amount = float(neg.agreed_amount or neg.current_amount or 0)
         neg.status = NegotiationStatus.AGREED
         store.negotiations[neg.id] = neg
         await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
-        await stellar_anchor_service.execute_offramp(
-            amount=amount,
-            iban=CUSTOMER_IBAN,
-            negotiation_id=neg.id,
-            supplier="iade",
+        await ws_manager.broadcast(
+            {
+                "type": "anchor_step",
+                "message": "Kargo teslim alındı ve onaylandı — iade ödemesi başlatılıyor.",
+                "level": "info",
+            }
         )
-        if store.transactions:
-            neg.payment_tx = store.transactions[0].tx_hash
-        neg.status = NegotiationStatus.PAID
-        store.negotiations[neg.id] = neg
-        await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
+        # Raises SettlementFailed and restores PENDING_INSPECTION if the payment fails.
+        return await settle_pending(
+            neg,
+            pending_status=NegotiationStatus.PENDING_INSPECTION,
+            amount=amount,
+            supplier="iade",
+            iban=CUSTOMER_IBAN,
+        )
+
+    async def reject_return(self, negotiation_id: str) -> Negotiation:
+        """Seller refused the parcel (never arrived / damaged): cancel the escrowed refund."""
+        neg = store.negotiations[negotiation_id]
+        return await reject_pending(
+            neg, "Kargo reddedildi — nakit iade iptal edildi (REJECTED)."
+        )
 
 
 return_agent = ReturnAgentService()

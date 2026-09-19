@@ -28,7 +28,11 @@ class NegotiationStatus(str, Enum):
     AWAITING_APPROVAL = "awaiting_approval"
     PENDING_MULTISIG = "pending_multisig"
     PAID = "paid"
-    REJECTED = "rejected"
+    REJECTED = "REJECTED"
+    # B2B güvenlik katmanı: ödeme, insan onayına kadar bekletilir.
+    PENDING_APPROVAL = "PENDING_APPROVAL"  # Maker-Checker: yönetici onayı bekleniyor
+    PENDING_INSPECTION = "PENDING_INSPECTION"  # Escrow: iade kargosu bekleniyor
+    COMPLETED = "COMPLETED"
 
 
 class RuleCreate(BaseModel):
@@ -106,12 +110,18 @@ class Negotiation(BaseModel):
     messages: list[OfferMessage] = Field(default_factory=list)
     anomaly_reason: Optional[str] = None
     payment_tx: Optional[str] = None
+    flow: Optional[str] = None  # "purchase" | "refund" — which approval endpoint settles it
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AnomalyAction(BaseModel):
     negotiation_id: str
     approved: bool = True
+
+
+class ApprovalRequest(BaseModel):
+    negotiation_id: str = Field(..., min_length=1, max_length=64)
+    lang: Optional[str] = Field(None, pattern=r'^(tr|en)$')
 
 
 class PaymentSession(BaseModel):

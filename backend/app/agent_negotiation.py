@@ -15,6 +15,9 @@ from .models import (
     NegotiationStatus,
     PastInvoice,
 )
+from .auth_context import current_user_id
+from .approvals import reject_pending, settle_pending
+from .db import record_pending
 from .rules_engine import RuleEngine
 from .stellar_anchor import stellar_anchor_service
 from .store import store
@@ -45,6 +48,16 @@ SYSTEM_TEXT = {
         "accept": "Kabul — {price:.2f} TL ≤ {limit:.2f} TL. Deal.",
         "over_limit": "{price:.2f} TL limitin üzerinde ({limit:.2f} TL).",
         "llm_error": "LLM pazarlık hatası: {error}",
+        "pending_approval": (
+            "Maker-Checker: {amount:.2f} TL üzerinde anlaşıldı. Ödeme yönetici "
+            "onayına kadar bekletiliyor (PENDING_APPROVAL)."
+        ),
+        "purchase_approved": (
+            "Yönetici satın almayı onayladı. Stellar ödemesi başlatılıyor."
+        ),
+        "purchase_rejected": (
+            "Yönetici satın almayı reddetti. Ödeme iptal edildi (REJECTED)."
+        ),
     },
     "en": {
         "anomaly_freeze": (
@@ -59,6 +72,16 @@ SYSTEM_TEXT = {
         "accept": "Accepted — {price:.2f} TRY <= {limit:.2f} TRY. Deal.",
         "over_limit": "{price:.2f} TRY is above the limit ({limit:.2f} TRY).",
         "llm_error": "LLM negotiation error: {error}",
+        "pending_approval": (
+            "Maker-Checker: agreed on {amount:.2f} TRY. Payment is held until a "
+            "manager approves it (PENDING_APPROVAL)."
+        ),
+        "purchase_approved": (
+            "The manager approved the purchase. Starting the Stellar payment."
+        ),
+        "purchase_rejected": (
+            "The manager rejected the purchase. The payment was cancelled (REJECTED)."
+        ),
     },
 }
 
@@ -520,7 +543,7 @@ class AgentNegotiationService:
                 "deal",
                 3,
             )
-            await self._close_deal(neg, seller2["price"])
+            await self._hold_for_approval(neg, seller2["price"], lang)
             return
 
         neg.status = NegotiationStatus.FAILED
@@ -533,6 +556,61 @@ class AgentNegotiationService:
             "negotiating",
             3,
         )
+
+    async def _hold_for_approval(self, neg: Negotiation, amount: float, lang: str) -> None:
+        """Maker-Checker: the agents agreed, but no money moves until a manager approves."""
+        neg.agreed_amount = amount
+        neg.current_amount = amount
+        neg.flow = "purchase"
+        neg.status = NegotiationStatus.PENDING_APPROVAL
+        store.negotiations[neg.id] = neg
+        record_pending(
+            negotiation_id=neg.id,
+            supplier=neg.supplier,
+            amount=amount,
+            status=NegotiationStatus.PENDING_APPROVAL.value,
+            user_id=current_user_id.get(),
+        )
+        await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
+        await ws_manager.broadcast(
+            {
+                "type": "anchor_step",
+                "message": text(lang, "pending_approval", amount=amount),
+                "level": "warn",
+            }
+        )
+
+    async def approve_purchase(
+        self, negotiation_id: str, lang: Optional[str] = None
+    ) -> Negotiation:
+        """Checker step: the manager releases a PENDING_APPROVAL purchase to Stellar."""
+        lang = normalize_lang(lang)
+        neg = store.negotiations[negotiation_id]
+        amount = float(neg.agreed_amount or neg.current_amount or neg.initial_amount)
+        # Leave PENDING_APPROVAL before the first await so a double click cannot pay twice.
+        neg.status = NegotiationStatus.AGREED
+        store.negotiations[neg.id] = neg
+        await ws_manager.broadcast(
+            {
+                "type": "anchor_step",
+                "message": text(lang, "purchase_approved"),
+                "level": "info",
+            }
+        )
+        # Raises SettlementFailed and restores PENDING_APPROVAL if the payment fails.
+        return await settle_pending(
+            neg,
+            pending_status=NegotiationStatus.PENDING_APPROVAL,
+            amount=amount,
+            supplier=neg.supplier,
+        )
+
+    async def reject_purchase(
+        self, negotiation_id: str, lang: Optional[str] = None
+    ) -> Negotiation:
+        """Checker step: the manager cancels a PENDING_APPROVAL purchase."""
+        neg = store.negotiations[negotiation_id]
+        return await reject_pending(neg, text(normalize_lang(lang), "purchase_rejected"))
 
     async def _close_deal(self, neg: Negotiation, amount: float) -> None:
         neg.agreed_amount = amount

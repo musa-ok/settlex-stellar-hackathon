@@ -115,16 +115,25 @@ def persist_settlement(
 ) -> NegotiationSession:
     url = explorer_url_for(tx_hash)
     with session_scope() as db:
-        row = NegotiationSession(
-            user_id=user_id,
-            negotiation_id=negotiation_id,
-            supplier=supplier or "",
-            amount=float(amount or 0),
-            status=status,
-            tx_hash=tx_hash,
-            explorer_url=url,
-        )
-        db.add(row)
+        # An approved escrow / maker-checker payment settles the row that was
+        # recorded while it was pending instead of adding a duplicate.
+        row = _pending_row(db, negotiation_id)
+        if row is not None:
+            row.amount = float(amount or 0)
+            row.status = status
+            row.tx_hash = tx_hash
+            row.explorer_url = url
+        else:
+            row = NegotiationSession(
+                user_id=user_id,
+                negotiation_id=negotiation_id,
+                supplier=supplier or "",
+                amount=float(amount or 0),
+                status=status,
+                tx_hash=tx_hash,
+                explorer_url=url,
+            )
+            db.add(row)
         db.flush()
         db.refresh(row)
         snapshot = NegotiationSession(
@@ -139,6 +148,61 @@ def persist_settlement(
             created_at=row.created_at,
         )
     return snapshot
+
+
+PENDING_STATUSES = ("PENDING_APPROVAL", "PENDING_INSPECTION")
+
+
+def _pending_row(db: Session, negotiation_id: Optional[str]) -> Optional[NegotiationSession]:
+    if not negotiation_id:
+        return None
+    return (
+        db.query(NegotiationSession)
+        .filter(
+            NegotiationSession.negotiation_id == negotiation_id,
+            NegotiationSession.status.in_(PENDING_STATUSES),
+        )
+        .order_by(NegotiationSession.created_at.desc())
+        .first()
+    )
+
+
+def record_pending(
+    *,
+    negotiation_id: str,
+    supplier: str,
+    amount: float,
+    status: str,
+    user_id: Optional[str] = None,
+) -> None:
+    """Persist a payment that is held until a human approves it (non-fatal)."""
+    try:
+        persist_settlement(
+            negotiation_id=negotiation_id,
+            supplier=supplier,
+            amount=amount,
+            tx_hash=None,
+            status=status,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        print(f"SQLite pending persist failed (non-fatal): {exc}")
+
+
+def mark_session_status(negotiation_id: str, status: str) -> None:
+    """Set the status of the latest persisted row for a negotiation (non-fatal)."""
+    try:
+        with session_scope() as db:
+            row = (
+                db.query(NegotiationSession)
+                .filter(NegotiationSession.negotiation_id == negotiation_id)
+                .order_by(NegotiationSession.created_at.desc())
+                .first()
+            )
+            if row is not None:
+                row.status = status
+    except Exception as exc:
+        print(f"SQLite status update failed (non-fatal): {exc}")
 
 
 async def announce_settlement(
