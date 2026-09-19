@@ -18,7 +18,7 @@
 
 | | |
 |---|---|
-| **Live Project Link** | _Coming soon_ <!-- TODO: add deployed URL --> |
+| **Live Project Link** | https://hammerhead-app-hfcgi.ondigitalocean.app |
 | **Pitch deck** | _Coming soon_ <!-- TODO: add deck link --> |
 | **Repository** | https://github.com/musa-ok/settlex-stellar-hackathon |
 
