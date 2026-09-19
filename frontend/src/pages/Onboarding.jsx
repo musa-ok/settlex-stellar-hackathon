@@ -3,11 +3,13 @@ import { useState } from 'react'
 import { api } from '../api'
 import { useLanguage } from '../hooks/useLanguage.jsx'
 import { useToast } from '../contexts/ToastContext'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 export default function Onboarding() {
   const navigate = useNavigate()
   const { t } = useLanguage()
   const { error, success } = useToast()
+  const auth = useAuth()
   const [wallet, setWallet] = useState(() => localStorage.getItem('kasa_wallet') || '')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -71,6 +73,30 @@ export default function Onboarding() {
             {t('Ajan pazarlık ediyor, sen sadece izliyorsun — ödeme gerçek TL\'ye dönüşüyor.', 'Agents negotiate, you just watch — payment turns into real TRY.')}
           </p>
           <div className="mt-9 flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={auth.busy}
+              onClick={async () => {
+                try {
+                  await auth.login()
+                  success(t('Passkey ile giriş başarılı', 'Passkey login successful'))
+                } catch {
+                  try {
+                    await auth.register()
+                    success(t('Passkey kaydedildi', 'Passkey registered'))
+                  } catch (err) {
+                    error(err.message || t('Passkey başarısız', 'Passkey failed'))
+                  }
+                }
+              }}
+              className="rounded-xl bg-mint px-5 py-3 text-sm font-semibold text-ink transition hover:bg-white disabled:opacity-60"
+            >
+              {auth.busy
+                ? t('FaceID / TouchID…', 'FaceID / TouchID…')
+                : auth.authenticated
+                  ? t('Passkey oturumu açık', 'Passkey session active')
+                  : t('Passkey ile giriş', 'Login with Passkey')}
+            </button>
             <button
               type="button"
               disabled={busy}

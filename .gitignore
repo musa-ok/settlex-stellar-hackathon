@@ -1,7 +1,10 @@
 # Settlex - Hackathon Project
 
 # Python / Backend
+<<<<<<< HEAD
 __pycache__/
+=======
+>>>>>>> bonus-ozellikler
 **/__pycache__/
 *.py[cod]
 *$py.class
@@ -82,7 +85,11 @@ dist-ssr/
 .pnp.*
 .pnp.js
 
+<<<<<<< HEAD
 # Security - CRITICAL (never commit API keys, wallets, or secrets)
+=======
+# Security - CRITICAL (never commit API keys, wallets, SQLite data, or Passkey material)
+>>>>>>> bonus-ozellikler
 .env
 .env.*
 !.env.example
@@ -105,6 +112,9 @@ credentials/
 config/secrets.json
 .data/
 backend/.data/
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE
 .vscode/

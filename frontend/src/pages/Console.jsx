@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useAgentConsole } from '../hooks/useAgentConsole'
 import { useLanguage } from '../hooks/useLanguage.jsx'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 export default function Console() {
   const { t, language } = useLanguage()
-  const { turns, deal, anchorSteps, negotiation, connected, resetSession } = useAgentConsole()
+  const auth = useAuth()
+  const { turns, deal, settlement, anchorSteps, negotiation, connected, resetSession } = useAgentConsole()
   const sellerEnd = useRef(null)
   const buyerEnd = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -20,6 +22,10 @@ export default function Console() {
     !deal &&
     (negotiation?.status === 'pending_multisig' || negotiation?.status === 'awaiting_approval')
   const dealPrice = deal?.price ?? negotiation?.agreed_amount
+  const txHash = settlement?.tx_hash || negotiation?.payment_tx
+  const explorerUrl =
+    settlement?.explorer_url ||
+    (txHash ? `https://stellar.expert/explorer/testnet/tx/${txHash}` : null)
 
   useEffect(() => {
     sellerEnd.current?.scrollIntoView({ behavior: 'smooth' })
@@ -27,6 +33,13 @@ export default function Console() {
   }, [turns])
 
   async function sendInvoice() {
+    if (!auth.authenticated) {
+      try {
+        await auth.login()
+      } catch {
+        await auth.register()
+      }
+    }
     resetSession()
     setBusy(true)
     try {
@@ -60,6 +73,32 @@ export default function Console() {
       <section className="space-y-4 rounded-2xl border border-ink/10 bg-white/80 p-5 shadow-sm">
         <h2 className="font-display text-xl font-semibold text-ink">{t('Demo Simülasyon Paneli', 'Demo Simulation Panel')}</h2>
         <p className="text-sm text-ink/50">{t('B2B fatura veya B2C iade akışını tetikle.', 'Trigger B2B invoice or B2C return flow.')}</p>
+        {!auth.authenticated && (
+          <div className="rounded-xl border border-mint/40 bg-mint/10 p-4">
+            <p className="text-sm font-semibold text-ink">
+              {t('Ajanları tetiklemeden önce Passkey (FaceID / TouchID / Windows Hello) ile giriş yapın.', 'Login with Passkey (FaceID / TouchID / Windows Hello) before triggering agents.')}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={auth.busy}
+                onClick={() => auth.login().catch(() => {})}
+                className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-mint"
+              >
+                {t('Passkey ile giriş', 'Login with Passkey')}
+              </button>
+              <button
+                type="button"
+                disabled={auth.busy}
+                onClick={() => auth.register().catch(() => {})}
+                className="rounded-xl border border-ink/20 px-4 py-2 text-sm font-semibold text-ink"
+              >
+                {t('Passkey kaydet', 'Register Passkey')}
+              </button>
+            </div>
+            {auth.error && <p className="mt-2 text-xs text-danger">{auth.error}</p>}
+          </div>
+        )}
 
         <div className="rounded-xl border border-ink/10 bg-sand/30 p-4">
           <h3 className="text-sm font-bold uppercase tracking-wide text-ink/70">
@@ -92,7 +131,7 @@ export default function Console() {
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !auth.authenticated}
               onClick={sendInvoice}
               className="flex-1 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-mint disabled:opacity-50"
             >
@@ -117,8 +156,9 @@ export default function Console() {
           </label>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || !auth.authenticated}
             onClick={async () => {
+              if (!auth.authenticated) return
               resetSession()
               setBusy(true)
               try {
@@ -141,6 +181,21 @@ export default function Console() {
               {t('MUTABAKAT SAĞLANDI', 'AGREEMENT REACHED')} — {Number(dealPrice).toFixed(0)} TL
             </p>
           </div>
+          {explorerUrl && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="explorer-glow block rounded-2xl border-2 border-mint bg-ink px-6 py-5 text-center no-underline shadow-lg transition hover:bg-panel"
+            >
+              <p className="font-display text-lg font-bold text-mint md:text-xl">
+                View Settlement on Stellar Expert
+              </p>
+              <p className="mt-2 break-all font-mono text-xs text-mint/80">
+                {explorerUrl}
+              </p>
+            </a>
+          )}
           {anchorSteps.length > 0 && (
             <ol className="rounded-2xl border border-ink/10 bg-ink p-5 font-mono text-sm">
               {anchorSteps.map((step, i) => {

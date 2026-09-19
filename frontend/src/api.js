@@ -1,8 +1,17 @@
 const API = import.meta.env.VITE_API_URL || ''
 
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('settlex_passkey_session')
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  }
+}
+
 async function req(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: authHeaders(options.headers || {}),
     ...options,
   })
   if (!res.ok) {
@@ -41,6 +50,22 @@ export const api = {
   transactions: () => req('/api/transactions'),
   withdraw: (body) => req('/api/anchor/withdraw', { method: 'POST', body: JSON.stringify(body) }),
   logs: () => req('/api/logs'),
+  sessions: () => req('/api/sessions'),
+  passkeyRegisterOptions: (username) =>
+    req('/api/passkey/register/options', { method: 'POST', body: JSON.stringify({ username }) }),
+  passkeyRegisterVerify: (username, credential) =>
+    req('/api/passkey/register/verify', { method: 'POST', body: JSON.stringify({ username, credential }) }),
+  passkeyLoginOptions: (username) =>
+    req('/api/passkey/login/options', { method: 'POST', body: JSON.stringify({ username }) }),
+  passkeyLoginVerify: (username, credential) =>
+    req('/api/passkey/login/verify', { method: 'POST', body: JSON.stringify({ username, credential }) }),
+  passkeyMe: (token) =>
+    req('/api/passkey/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+  passkeyLogout: (token) =>
+    req('/api/passkey/logout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
 }
 
 export function wsUrl() {

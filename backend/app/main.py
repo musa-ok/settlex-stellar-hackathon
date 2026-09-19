@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .agent_negotiation import negotiation_service
+from .auth_context import current_user_id
+from .db import NegotiationSession, init_db, session_scope
+from .passkeys import require_passkey_user, router as passkey_router, user_from_token, bearer_token
 from .return_agent import return_agent
 from .stellar_anchor import stellar_anchor_service
 from .models import (
@@ -40,11 +44,30 @@ rule_engine = RuleEngine()
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="Settlex",
-    description="Otonom ödeme ajanı — çevrimiçi ajan pazarlığı × Stellar × SEP-6/SEP-10",
-    version="0.3.0",
+    description="Otonom ödeme ajanı — çevrimiçi ajan pazarlığı × Stellar × SEP-6/SEP-10 × Passkeys",
+    version="0.4.0",
+    lifespan=lifespan,
 )
+app.include_router(passkey_router)
+
+
+@app.middleware("http")
+async def attach_passkey_user(request, call_next):
+    user = user_from_token(bearer_token(request))
+    token = current_user_id.set(user.id if user else None)
+    try:
+        return await call_next(request)
+    finally:
+        current_user_id.reset(token)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,13 +123,13 @@ async def delete_rule(rule_id: str):
 
 
 @app.post("/api/invoice")
-async def post_invoice(body: InvoiceCreate):
+async def post_invoice(body: InvoiceCreate, _user=Depends(require_passkey_user)):
     """Submit invoice (LEGACY: Use /api/invoice/stateless for new integrations)"""
     return await negotiation_service.submit_invoice(body, lang=body.lang)
 
 
 @app.post("/api/invoice/stateless")
-async def post_invoice_stateless(body: StatelessInvoiceRequest):
+async def post_invoice_stateless(body: StatelessInvoiceRequest, _user=Depends(require_passkey_user)):
     """Submit invoice with context (STATELESS - Recommended for new integrations)"""
     try:
         # Extract context data
@@ -173,7 +196,7 @@ async def post_invoice_stateless(body: StatelessInvoiceRequest):
 
 
 @app.post("/api/return")
-async def post_return(body: ReturnCreate | None = None):
+async def post_return(body: ReturnCreate | None = None, _user=Depends(require_passkey_user)):
     """Submit return request (LEGACY: Use /api/return/stateless for new integrations)"""
     text = body.text if body else ""
     lang = body.lang if body and body.lang else "tr"
@@ -181,7 +204,7 @@ async def post_return(body: ReturnCreate | None = None):
 
 
 @app.post("/api/return/stateless")
-async def post_return_stateless(body: StatelessReturnRequest):
+async def post_return_stateless(body: StatelessReturnRequest, _user=Depends(require_passkey_user)):
     """Submit return request with context (STATELESS - Recommended for new integrations)"""
     try:
         # Extract context data
@@ -353,6 +376,34 @@ async def sep10_token(payload: dict):
 async def transactions():
     """List transactions (DEPRECATED: Stateless API doesn't store history)"""
     return store.transactions
+
+
+@app.get("/api/sessions")
+async def list_sessions(_user=Depends(require_passkey_user)):
+    """Persisted negotiation settlements with Stellar tx hashes."""
+    with session_scope() as db:
+        rows = (
+            db.query(NegotiationSession)
+            .filter(
+                (NegotiationSession.user_id == _user.id) | (NegotiationSession.user_id.is_(None))
+            )
+            .order_by(NegotiationSession.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "negotiation_id": r.negotiation_id,
+                "supplier": r.supplier,
+                "amount": r.amount,
+                "status": r.status,
+                "tx_hash": r.tx_hash,
+                "explorer_url": r.explorer_url,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
 
 
 @app.post("/api/anchor/withdraw")
