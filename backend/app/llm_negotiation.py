@@ -26,6 +26,7 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     """Parse JSON from LLM response with robust error handling"""
     text = (raw or "").strip()
     
+    
     if not text:
         raise ValueError("Empty response to parse")
     
@@ -49,14 +50,14 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
                 e.pos
             ) from e
 
-
 class NegotiationLLM:
     def __init__(self) -> None:
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+        # .env'yi devre dışı bırakıp modeli direkt string olarak veriyoruz:
+        self.model_name = "gemini-2.5-flash"
+        
         self.api_key = os.environ.get("GEMINI_API_KEY")
         if self.api_key:
             genai.configure(api_key=self.api_key)
-
     async def complete(self, system: str, user: str) -> dict[str, Any]:
         """Execute LLM completion with comprehensive error handling"""
         if not self.api_key:

@@ -11,6 +11,19 @@
 
 The system doesn't just talk—it settles. Every successful negotiation culminates in an automated on-chain transaction via **Stellar SEP-6**, ensuring that once agents agree on a price, the money moves instantly and transparently.
 
+## 🎯 The Narrative (Why Settlex?)
+
+### The Problem
+In B2B e-commerce and supply chains, inter-company invoice reconciliations and return processes take weeks and create high operational costs. Manual negotiations, multiple approval layers, and complex payment reconciliation workflows slow down business operations and create cash flow bottlenecks.
+
+### The Solution
+Settlex uses LLM-based autonomous agents to resolve price and invoice negotiations between two companies in seconds without human intervention, ensuring instant on-chain settlement via the Stellar network. By automating the entire negotiation-to-payment pipeline, we eliminate friction, reduce operational overhead, and provide transparency through blockchain records.
+
+### Target Audience
+- **B2B Companies:** Procurement teams and supply chain managers
+- **Suppliers:** Vendors seeking faster payment reconciliation
+- **Enterprise Finance Departments:** Organizations needing automated invoice processing and payment orchestration
+
 ### 🎯 Hackathon Context
 
 - **Event:** Rise In × Stellar Pro Hackathon 2026
@@ -537,6 +550,12 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 - **Circle USDC Faucet:** [https://faucet.circle.com](https://faucet.circle.com)
 - **Stellar AI Skills:** [https://skills.stellar.org](https://skills.stellar.org)
 
+## 📚 Resources & Stellar Skills Used
+
+This project was built referencing the official Stellar build skills. Specifically, we utilized:
+- `skills/agentic-payments/SKILL.md` (For LLM agent negotiation flows)
+- `skills/standards/SKILL.md` (For SEP-6 deposit/withdraw mock anchor integration architecture)
+
 ---
 
 ## 🤝 Contributing
@@ -545,7 +564,15 @@ This is a hackathon submission. For inquiries or collaboration, please contact t
 
 ---
 
-## 📄 License
+## � Team (Who Built It)
+
+- **Musa Ok** - Lead Backend & AI Agent Developer
+- **Şahin Kara** - Technical Documentation & Architecture
+- **Delil Çiya Avcı** - Product Strategy & Presentation
+
+---
+
+## �📄 License
 
 MIT License - Developed for the Rise In × Stellar Pro Hackathon 2026
 
