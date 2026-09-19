@@ -478,23 +478,7 @@ Content-Type: application/json
 
 ---
 
-## 🎥 Demo
 
-[Demo Video Linki Gelecek]
-
-**Demo Highlights:**
-- Passkey login (FaceID / TouchID / Windows Hello) before agents run
-- Real-time agent negotiation console
-- B2B invoice negotiation with RAG
-- B2C split refund logic
-- Production-ready Dynamic SEP-1 Anchor Discovery
-- SEP-10 authentication flow
-- SEP-6 off-ramp execution
-- SQLite persistence of `tx_hash` (user traction)
-- Clickable Stellar Expert settlement proof
-- Multi-sig CFO approval
-
----
 
 ## 🔒 Security Features
 
