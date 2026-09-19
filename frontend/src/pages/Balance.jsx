@@ -8,6 +8,7 @@ export default function Balance() {
   const { error, success } = useToast()
   const [bal, setBal] = useState(null)
   const [txs, setTxs] = useState([])
+  const [sessions, setSessions] = useState([])
   const [iban, setIban] = useState('TR33 0006 1005 1978 6457 8413 26')
   const [amount, setAmount] = useState(445)
   const [result, setResult] = useState(null)
@@ -16,9 +17,14 @@ export default function Balance() {
   const wallet = localStorage.getItem('kasa_wallet')
 
   async function refresh() {
-    const [b, t] = await Promise.all([api.balance(wallet || undefined), api.transactions()])
+    const [b, t, s] = await Promise.all([
+      api.balance(wallet || undefined),
+      api.transactions(),
+      api.sessions().catch(() => []),
+    ])
     setBal(b)
     setTxs(t)
+    setSessions(Array.isArray(s) ? s : [])
   }
 
   useEffect(() => {
@@ -125,7 +131,7 @@ export default function Balance() {
         className="rounded-2xl bg-ink p-6 text-sand md:max-w-lg"
       >
         <h2 className="font-display text-2xl font-semibold text-mint">{t('Bankaya çek', 'Withdraw to bank')}</h2>
-        <p className="mt-1 text-sm text-sand/55">tr-mock-anchor.fly.dev · SEP-6 · SEP-10 ({t('API key yok', 'No API key')})</p>
+        <p className="mt-1 text-sm text-sand/55">SEP-1 dynamic discovery · SEP-6 · SEP-10 ({t('API key yok', 'No API key')})</p>
         <label className="mt-5 block text-xs font-medium text-sand/60">{t('Tutar (TL)', 'Amount (TL)')}</label>
         <input
           type="number"
@@ -156,6 +162,50 @@ export default function Balance() {
           </p>
         )}
       </form>
+
+      <div>
+        <h2 className="mb-3 text-sm font-semibold text-ink">{t('On-chain mutabakatlar', 'On-chain settlements')}</h2>
+        <div className="overflow-x-auto rounded-2xl border border-ink/10 bg-white/60">
+          <table className="w-full min-w-[480px] text-left text-sm">
+            <thead className="border-b border-ink/10 font-mono text-xs uppercase text-ink/45">
+              <tr>
+                <th className="px-4 py-3">{t('Tedarikçi', 'Supplier')}</th>
+                <th className="px-4 py-3">{t('Tutar', 'Amount')}</th>
+                <th className="px-4 py-3">tx_hash</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-ink/40">
+                    {t('Henüz kayıtlı mutabakat yok', 'No persisted settlements yet')}
+                  </td>
+                </tr>
+              )}
+              {sessions.map((s) => (
+                <tr key={s.id} className="border-t border-ink/5">
+                  <td className="px-4 py-3">{s.supplier}</td>
+                  <td className="px-4 py-3 font-semibold">{Number(s.amount).toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    {s.explorer_url ? (
+                      <a
+                        className="break-all font-mono text-xs text-mint-dim underline"
+                        href={s.explorer_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {s.tx_hash}
+                      </a>
+                    ) : (
+                      <span className="text-ink/35">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div>
         <h2 className="mb-3 text-sm font-semibold text-ink">{t('İşlem geçmişi', 'Transaction history')}</h2>

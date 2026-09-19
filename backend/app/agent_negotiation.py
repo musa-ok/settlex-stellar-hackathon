@@ -541,6 +541,8 @@ class AgentNegotiationService:
         store.negotiations[neg.id] = neg
         await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})
         await stellar_anchor_service.on_deal_reached(amount, neg.id)
+        if store.transactions:
+            neg.payment_tx = store.transactions[0].tx_hash
         neg.status = NegotiationStatus.PAID
         store.negotiations[neg.id] = neg
         await ws_manager.broadcast({"type": "negotiation", "data": neg.model_dump()})

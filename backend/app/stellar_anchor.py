@@ -21,6 +21,8 @@ from stellar_sdk.exceptions import (
     Ed25519PublicKeyInvalidError,
 )
 
+from .auth_context import current_user_id
+from .db import announce_settlement
 from .models import AgentLog, TransactionRecord, ErrorResponse, ErrorDetail
 from .store import store
 from .websocket_manager import ws_manager
@@ -700,6 +702,16 @@ class StellarAnchorService:
                 withdraw["error"] = str(exc)
             
             withdraw["ok"] = True
+            tx_hash = withdraw.get("tx_hash")
+            settle_status = "simulated" if withdraw.get("simulated") else ("submitted" if tx_hash else "anchor-ok")
+            await announce_settlement(
+                negotiation_id=negotiation_id,
+                supplier=supplier,
+                amount=amount,
+                tx_hash=tx_hash,
+                status=settle_status,
+                user_id=current_user_id.get(),
+            )
             return withdraw
             
         except ValueError as e:

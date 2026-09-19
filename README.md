@@ -55,7 +55,16 @@ Settlex introduces the **Karma İade (Split Refund)** logic. If a customer wants
 A unified interface and backend that supports seamless switching between Turkish and English. The AI agents dynamically adjust their negotiation tone, language, and cultural nuances based on the user's preference.
 
 ### 🔒 Enterprise-Grade Stateless API
-Settlex is built as a **stateless API engine** - perfect for enterprise integration. All context (rules, past invoices, wallet keys) is provided by the client in each request. No internal state storage, no database dependencies, pure functional architecture.
+Settlex is built as a **stateless API engine** - perfect for enterprise integration. All context (rules, past invoices, wallet keys) is provided by the client in each request. Negotiation logic stays request-scoped; SQLite is used only for Passkeys and post-settlement traction (tx hashes).
+
+### 🗄️ SQLite Traction Store
+Successful on-chain settlements are persisted in SQLite (`users`, `webauthn_credentials`, `negotiation_sessions`). Each paid session stores the Stellar `tx_hash` so judges can audit real ledger activity.
+
+### 🔐 Passkeys (WebAuthn)
+Users must **Login with Passkey** (FaceID / TouchID / Windows Hello) before triggering AI negotiation agents. Invoice and return APIs require a Bearer session issued after WebAuthn verification.
+
+### 🔗 Clickable Stellar Expert Proof
+When settlement succeeds, the console shows a glowing link: `https://stellar.expert/explorer/testnet/tx/<TX_HASH>`.
 
 ---
 
@@ -69,8 +78,10 @@ Settlex is built as a **stateless API engine** - perfect for enterprise integrat
 | **AI Engine** | Gemini 1.5 Flash / text-embedding-004 | LLM-powered negotiation agents & vector embeddings |
 | **Vector Search** | NumPy 2.1.3 | Cosine similarity for RAG retrieval |
 | **Blockchain** | Stellar SDK 12.1.0 | SEP-6 Offramps, SEP-10 Auth, Multi-Sig |
+| **Persistence** | SQLite + SQLAlchemy 2.0.36 | Users, Passkeys, NegotiationSession + `tx_hash` |
+| **Auth** | WebAuthn 2.5 (`webauthn`) | Passkeys (FaceID / TouchID / Windows Hello) |
 | **Frontend** | React 19 / Vite 8 / Tailwind CSS 4 | Real-time agent console |
-| **WebSocket** | Native WebSocket | Live agent communication |
+| **WebSocket** | Native WebSocket | Live agent communication + settlement events |
 | **Validation** | Pydantic 2.10 | Enterprise-grade input validation |
 | **HTTP Client** | httpx 0.28.1 | Async HTTP requests |
 
@@ -84,9 +95,11 @@ graph TB
     end
     
     subgraph "API Layer"
-        API[FastAPI Stateless API]
+        API[FastAPI]
         CORS[CORS Security]
         Validator[Pydantic Validation]
+        Passkeys[WebAuthn Passkeys]
+        DB[(SQLite settlex.db)]
     end
     
     subgraph "Business Logic"
@@ -112,6 +125,8 @@ graph TB
     WS --> API
     API --> CORS
     API --> Validator
+    API --> Passkeys
+    Passkeys --> DB
     API --> Negotiation
     API --> ReturnAgent
     Negotiation --> Rules
@@ -124,6 +139,7 @@ graph TB
     DEX --> Horizon
     Horizon --> Friendbot
     SEP6 --> DEX
+    SEP6 --> DB
 ```
 
 ---
@@ -216,8 +232,9 @@ sequenceDiagram
 
 ### Prerequisites
 
-- **Python:** 3.9+
+- **Python:** 3.11+ (3.9+ with `tomli` if needed)
 - **Node.js:** 18+
+- **Platform authenticator:** FaceID, TouchID, or Windows Hello (Passkeys)
 - **Google AI API Key:** [Get Gemini API Key](https://makersuite.google.com/app/apikey)
 - **Stellar Wallet:** [Freighter](https://freighter.app) or [demo-wallet.stellar.org](https://demo-wallet.stellar.org)
 
@@ -243,7 +260,14 @@ STELLAR_NETWORK=TESTNET
 STELLAR_SECRET_KEY=  # Optional: Auto-generated if not provided
 
 # CORS Security (comma-separated origins)
-ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
+
+# SQLite traction DB (default: backend/.data/settlex.db)
+# DATABASE_URL=sqlite:///./.data/settlex.db
+
+# Passkeys / WebAuthn
+# WEBAUTHN_RP_ID=localhost
+# WEBAUTHN_ORIGIN=http://127.0.0.1:5173
 
 # Anchor Configuration (defaults provided)
 # ANCHOR_HOME=https://tr-mock-anchor.fly.dev
@@ -301,6 +325,7 @@ npm run dev
 #### B2B Invoice Negotiation
 ```http
 POST /api/invoice/stateless
+Authorization: Bearer <passkey-session>
 Content-Type: application/json
 
 {
@@ -337,6 +362,7 @@ Content-Type: application/json
 #### B2C Return Negotiation
 ```http
 POST /api/return/stateless
+Authorization: Bearer <passkey-session>
 Content-Type: application/json
 
 {
@@ -368,14 +394,21 @@ Content-Type: application/json
 | `/api/sep10/challenge` | POST | Get SEP-10 challenge |
 | `/api/sep10/token` | POST | Get SEP-10 token |
 | `/api/anchor/withdraw` | POST | SEP-6 withdraw |
-| `/api/transactions` | GET | Transaction history |
+| `/api/transactions` | GET | In-memory transaction history |
+| `/api/sessions` | GET | SQLite NegotiationSession history (`tx_hash`) |
+| `/api/passkey/register/options` | POST | WebAuthn registration challenge |
+| `/api/passkey/register/verify` | POST | Verify Passkey registration |
+| `/api/passkey/login/options` | POST | WebAuthn login challenge |
+| `/api/passkey/login/verify` | POST | Verify Passkey login (issues session) |
+| `/api/passkey/me` | GET | Current Passkey session |
+| `/api/passkey/logout` | POST | Revoke Passkey session |
 | `/api/logs` | GET | System logs |
 
 ### WebSocket Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `/ws/agent-console` | Live agent negotiation console |
+| `/ws/agent-console` | Live agent negotiation, `anchor_step`, and `settlement` (`tx_hash`) events |
 | `/ws/agents` | Buyer/seller agent mesh network |
 
 ---
@@ -383,6 +416,7 @@ Content-Type: application/json
 ## 🛠️ Usage Flow
 
 ### 1. Onboarding
+- **Login with Passkey** (FaceID / TouchID / Windows Hello) — required before agents run
 - Connect your Stellar wallet or let the system auto-generate a funded Testnet account
 - Friendbot automatically funds your account with XLM
 
@@ -391,7 +425,7 @@ Content-Type: application/json
 - Rules can be defined via natural language or form interface
 
 ### 3. Trigger Negotiation
-- **B2B:** Submit an invoice from a supplier
+- **B2B:** Submit an invoice from a supplier (`Authorization: Bearer` Passkey session)
 - **B2C:** Start a customer return request
 
 ### 4. The Console
@@ -403,8 +437,9 @@ Content-Type: application/json
 - Once a "DEAL" is reached, the system automatically:
   - Authenticates via SEP-10
   - Initiates SEP-6 off-ramp
-  - Sends USDC on-chain to Mock Anchor treasury
-  - Anchor simulates TRY payout to IBAN
+  - Sends USDC on-chain to the anchor treasury
+  - Persists `tx_hash` in SQLite (`negotiation_sessions`)
+  - Surfaces a clickable Stellar Expert URL: `https://stellar.expert/explorer/testnet/tx/<TX_HASH>`
 
 ### 6. Verification
 - Verify the transaction on [Stellar Expert](https://stellar.expert)
@@ -417,11 +452,14 @@ Content-Type: application/json
 [Demo Video Linki Gelecek]
 
 **Demo Highlights:**
+- Passkey login (FaceID / TouchID / Windows Hello) before agents run
 - Real-time agent negotiation console
 - B2B invoice negotiation with RAG
 - B2C split refund logic
 - SEP-10 authentication flow
 - SEP-6 off-ramp execution
+- SQLite persistence of `tx_hash` (user traction)
+- Clickable Stellar Expert settlement proof
 - Multi-sig CFO approval
 
 ---
@@ -451,7 +489,7 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 ### CORS Security
 
 - Environment-based origin whitelist
-- Default: `http://localhost:5173,http://localhost:3000`
+- Default: `http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173`
 - Configurable via `ALLOWED_ORIGINS` env variable
 
 ### Input Validation
@@ -465,7 +503,9 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 
 - No API keys stored in code
 - Environment variable configuration
-- `.env.example` provided for setup
+### Passkey Session
+- Invoice and return endpoints require `Authorization: Bearer <token>` after WebAuthn login
+- SQLite stores users, credentials, and settlement `tx_hash` under `backend/.data/` (gitignored)
 
 ---
 
@@ -483,6 +523,9 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 | `ACCOUNT_NOT_FOUND` | Stellar account not found | 404 |
 | `TRANSACTION_ERROR` | Stellar transaction failed | 400 |
 | `VALIDATION_ERROR` | Input validation failed | 422 |
+| `PASSKEY_REQUIRED` | Login with Passkey before triggering agents | 401 |
+| `WEBAUTHN_REGISTER_FAILED` | Passkey registration verification failed | 400 |
+| `WEBAUTHN_LOGIN_FAILED` | Passkey login verification failed | 400 |
 
 ---
 
@@ -499,6 +542,7 @@ All errors return standardized JSON responses with appropriate HTTP status codes
    ```bash
    curl -X POST http://127.0.0.1:8000/api/invoice/stateless \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer <passkey-session>" \
      -d '{
        "invoice": {"supplier": "Test", "product": "item", "quantity": 1, "amount": 100},
        "context": {"past_invoices": [], "rules": [], "wallet_public_key": null},
@@ -547,6 +591,8 @@ All errors return standardized JSON responses with appropriate HTTP status codes
 - **Stellar Developer Docs:** [https://developers.stellar.org](https://developers.stellar.org)
 - **Stellar Lab:** [https://lab.stellar.org](https://lab.stellar.org)
 - **Stellar Expert:** [https://stellar.expert](https://stellar.expert)
+- **Stellar Expert (testnet tx):** [https://stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet)
+- **WebAuthn / Passkeys:** [https://webauthn.guide](https://webauthn.guide)
 - **Circle USDC Faucet:** [https://faucet.circle.com](https://faucet.circle.com)
 - **Stellar AI Skills:** [https://skills.stellar.org](https://skills.stellar.org)
 
@@ -564,7 +610,7 @@ This is a hackathon submission. For inquiries or collaboration, please contact t
 
 ---
 
-## � Team (Who Built It)
+## 👥 Team (Who Built It)
 
 - **Musa Ok** - Lead Backend & AI Agent Developer
 - **Şahin Kara** - Technical Documentation & Architecture
@@ -572,7 +618,7 @@ This is a hackathon submission. For inquiries or collaboration, please contact t
 
 ---
 
-## �📄 License
+## 📄 License
 
 MIT License - Developed for the Rise In × Stellar Pro Hackathon 2026
 

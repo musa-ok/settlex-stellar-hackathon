@@ -93,6 +93,20 @@ body {
   animation: deal-flash 1.2s ease-out 2;
 }
 
+@keyframes explorer-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(61, 220, 151, 0.35), 0 0 24px rgba(61, 220, 151, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(61, 220, 151, 0.95), 0 0 48px rgba(61, 220, 151, 0.4);
+  }
+}
+
+.explorer-glow {
+  animation: explorer-glow 1.8s ease-in-out infinite;
+}
+
 .terminal-scroll::-webkit-scrollbar {
   width: 6px;
 }

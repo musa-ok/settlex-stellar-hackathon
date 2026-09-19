@@ -1,9 +1,11 @@
 import { NavLink } from 'react-router-dom'
 import JuryBadges from './JuryBadges'
 import { useLanguage } from '../hooks/useLanguage.jsx'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 export default function Layout({ children }) {
   const { language, toggleLanguage, t } = useLanguage()
+  const auth = useAuth()
 
   const links = [
     { to: '/', label: t('Giriş', 'Onboarding'), end: true },
@@ -50,6 +52,24 @@ export default function Layout({ children }) {
               <span className="text-ink/20">|</span>
               <span className={language === 'en' ? 'text-mint' : 'text-ink/40'}>EN</span>
             </button>
+            {auth.authenticated ? (
+              <button
+                type="button"
+                onClick={() => auth.logout()}
+                className="rounded-full bg-mint/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-ink"
+              >
+                {t('Passkey', 'Passkey')} · {auth.username}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={auth.busy}
+                onClick={() => auth.login().catch(() => auth.register().catch(() => {}))}
+                className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-mint"
+              >
+                {auth.busy ? t('Doğrulanıyor…', 'Verifying…') : t('Passkey ile giriş', 'Login with Passkey')}
+              </button>
+            )}
           </div>
         </div>
       </header>
