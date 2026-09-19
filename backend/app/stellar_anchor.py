@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -613,6 +614,108 @@ class StellarAnchorService:
             "message": f"SEP-6 deposit {account_id} memo={memo}",
         }
 
+    async def quote_usdc_for_try(self, try_amount: float) -> tuple[float, Optional[dict[str, Any]]]:
+        """SEP-38: how much USDC the anchor needs to pay out `try_amount` TRY.
+        Anchors without a quote server keep the old 1:1 behaviour."""
+        quote_server = (self.discover_toml().get("ANCHOR_QUOTE_SERVER") or "").rstrip("/")
+        if not quote_server:
+            return float(try_amount), None
+        asset_code, issuer = self._configured_asset()
+        params = {
+            "sell_asset": f"stellar:{asset_code}:{issuer}",
+            "buy_asset": "iso4217:TRY",
+            "buy_amount": f"{try_amount:.2f}",
+            "buy_delivery_method": "bank_account",
+            "context": "sep6",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=ANCHOR_TIMEOUT) as client:
+                resp = await client.get(f"{quote_server}/price", params=params)
+                resp.raise_for_status()
+                quote = resp.json()
+            return float(quote["sell_amount"]), quote
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            print(f"SEP-38 quote failed, sending the TRY amount 1:1 as USDC: {exc}")
+            return float(try_amount), None
+
+    async def sep12_register_bank_account(self, token: str, iban: str) -> bool:
+        """SEP-12: tell the anchor which IBAN receives the TRY payout (non-fatal).
+        Without it the TR anchor pays a sandbox IBAN instead of the user's."""
+        kyc = (self.discover_toml().get("KYC_SERVER") or "").rstrip("/")
+        if not kyc:
+            return False
+        data = {
+            "account": self.agent_keypair().public_key,
+            "type": "sep6-withdraw",
+            "bank_account_number": (iban or DEFAULT_IBAN).replace(" ", ""),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=ANCHOR_TIMEOUT) as client:
+                resp = await client.put(
+                    f"{kyc}/customer", data=data, headers={"Authorization": f"Bearer {token}"}
+                )
+            return resp.status_code < 400
+        except httpx.HTTPError as exc:
+            print(f"SEP-12 customer registration failed (non-fatal): {exc}")
+            return False
+
+    async def track_fiat_payout(
+        self,
+        withdraw: dict[str, Any],
+        negotiation_id: Optional[str] = None,
+        attempts: int = 10,
+        interval: float = 2.0,
+    ) -> Optional[dict[str, Any]]:
+        """Poll SEP-6 /transaction until the anchor reports the TRY leg, then broadcast it."""
+        tx_id = (withdraw.get("body") or {}).get("id")
+        token = withdraw.get("token")
+        transfer = withdraw.get("transfer_server")
+        if not (tx_id and token and transfer):
+            return None
+        tx: dict[str, Any] = {}
+        async with httpx.AsyncClient(timeout=ANCHOR_TIMEOUT) as client:
+            for attempt in range(attempts):
+                try:
+                    resp = await client.get(
+                        f"{transfer}/transaction",
+                        params={"id": tx_id},
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    tx = resp.json().get("transaction") or {}
+                except (httpx.HTTPError, ValueError) as exc:
+                    print(f"SEP-6 /transaction poll failed: {exc}")
+                if tx.get("status") in ("completed", "error", "refunded", "expired"):
+                    break
+                if attempt < attempts - 1:
+                    await asyncio.sleep(interval)
+        if not tx:
+            return None
+
+        out_asset = str(tx.get("amount_out_asset") or "")
+        fiat = {
+            "type": "fiat_payout",
+            "negotiation_id": negotiation_id,
+            "anchor": self._home_domain,
+            "anchor_tx_id": tx_id,
+            "status": tx.get("status"),
+            "amount_in": tx.get("amount_in"),
+            "amount_out": tx.get("amount_out"),
+            "amount_fee": tx.get("amount_fee"),
+            "currency": out_asset.split(":")[-1] if out_asset else "TRY",
+            "external_transaction_id": tx.get("external_transaction_id"),
+            "stellar_transaction_id": tx.get("stellar_transaction_id"),
+            "message": tx.get("message"),
+        }
+        await ws_manager.broadcast(fiat)
+        if fiat["status"] == "completed":
+            await self._ui_step(
+                f"Anchor TL ödemesini tamamladı: {fiat['amount_out']} {fiat['currency']} "
+                f"· {fiat['external_transaction_id'] or tx_id}"
+            )
+        else:
+            await self._ui_step(f"Anchor TL ödeme durumu: {fiat['status']}", level="warn")
+        return fiat
+
     def _extract_treasury(self, body: dict[str, Any]) -> Optional[str]:
         for key in ("account_id", "how"):
             val = body.get(key)
@@ -854,7 +957,7 @@ class StellarAnchorService:
             base_fee=1000,
         )
         self._apply_memo(builder, memo, memo_type)
-        builder.append_payment_op(destination=destination, amount=f"{amount:.2f}", asset=usdc)
+        builder.append_payment_op(destination=destination, amount=f"{amount:.7f}", asset=usdc)
         tx = builder.set_timeout(120).build()
         tx.sign(kp)
         try:
@@ -894,9 +997,19 @@ class StellarAnchorService:
         try:
             await self._ui_step("SEP-10 Kimlik Doğrulanıyor (API Key Yok)...")
             token = await self.sep10_authenticate()
+            await self.sep12_register_bank_account(token, iban)
+
+            # `amount` is the agreed TRY figure; the Stellar leg carries its USDC equivalent.
+            usdc_amount, quote = await self.quote_usdc_for_try(amount)
+            if quote:
+                await self._ui_step(
+                    f"SEP-38 kur: {amount:.2f} TRY = {usdc_amount:.4f} USDC (spread dahil)"
+                )
 
             await self._ui_step("SEP-6 Çekim Talebi Oluşturuldu (TR IBAN)...")
-            withdraw = await self.sep6_withdraw(amount=amount, iban=iban, sep10_token=token)
+            withdraw = await self.sep6_withdraw(amount=usdc_amount, iban=iban, sep10_token=token)
+            withdraw["try_amount"] = amount
+            withdraw["usdc_amount"] = usdc_amount
             
             if not withdraw.get("ok"):
                 await self._ui_step(f"SEP-6 hata: {withdraw.get('body') or withdraw}")
@@ -910,7 +1023,7 @@ class StellarAnchorService:
             try:
                 record = await self.submit_usdc_to_treasury(
                     destination=dest,
-                    amount=amount,
+                    amount=usdc_amount,
                     memo=withdraw.get("memo"),
                     memo_type=withdraw.get("memo_type") or "text",
                     negotiation_id=negotiation_id,
@@ -926,7 +1039,8 @@ class StellarAnchorService:
                 else:
                     await self._ui_step("Stellar Ağına On-Chain Ödeme Gönderildi - TL Bankaya Aktarılıyor")
                     withdraw["tx_hash"] = record.tx_hash
-                    withdraw["message"] = f"{amount:.2f} USDC → {dest} | {record.tx_hash}"
+                    withdraw["message"] = f"{usdc_amount:.4f} USDC → {dest} | {record.tx_hash}"
+                    withdraw["fiat"] = await self.track_fiat_payout(withdraw, negotiation_id)
             except ValueError as e:
                 # Re-raise ValueError with ErrorResponse
                 raise
