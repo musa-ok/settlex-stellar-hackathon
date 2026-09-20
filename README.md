@@ -19,7 +19,7 @@
 | | |
 |---|---|
 | **Live Project Link** | https://hammerhead-app-hfcgi.ondigitalocean.app |
-| **Pitch deck** |[Sunum Dosyası(pdf)](./Settlex-Stellar-Pro-Hackathon-2026.pdf)|
+| **Pitch deck** |(./Settlex-Stellar-Pro-Hackathon-2026.pdf)|
 | **Repository** | https://github.com/musa-ok/settlex-stellar-hackathon |
 
 ---
